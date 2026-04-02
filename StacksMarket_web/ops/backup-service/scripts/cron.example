@@ -1,0 +1,5 @@
+# Ejecutar backup todos los días a las 02:00 UTC
+0 2 * * * cd /opt/bitcoinworld/ops/backup-service && /usr/bin/env bash -lc 'npm run backup >> /var/log/bitcoinworld-backup.log 2>&1'
+
+# Verificar restauración todos los días a las 03:00 UTC (a DB de validación)
+0 3 * * * cd /opt/bitcoinworld/ops/backup-service && /usr/bin/env bash -lc 'npm run verify >> /var/log/bitcoinworld-backup-verify.log 2>&1'

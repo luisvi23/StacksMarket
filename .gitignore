@@ -1,0 +1,114 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# SECRETOS Y CREDENCIALES
+# ══════════════════════════════════════════════════════════════════════════════
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.asc
+secrets/
+credentials/
+keystore/
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BLOCKCHAIN — mnemonics y claves privadas de wallets
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Ficheros de configuración Clarinet con mnemonics reales (Mainnet/Testnet/Devnet)
+Satcksmarket_contracts/bitcoinworld-cont/settings/
+
+# Cache de devnets locales (estado de red, logs, datos efímeros)
+**/.cache/
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INFRAESTRUCTURA AWS — IDs de cuenta, ARNs, topología, credenciales
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Task definitions de ECS (contienen ARNs de IAM roles, IDs de cuenta AWS)
+**/taskdef*.json
+
+# Documentos con ARNs reales, subnets, security groups, account IDs
+StacksMarket_web/deploy_actual.txt
+StacksMarket_web/deploy.txt
+StacksMarket_web/client_redeployment.txt
+StacksMarket_web/server_redeployment.txt
+Satcksmarket_contracts/deploy.txt
+
+# Estructura organizativa de cuentas AWS
+Satcksmarket_contracts/AWS_users.txt
+Satcksmarket_contracts/Users
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLAUDE CODE — configuración personal del IDE
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VS CODE — configuración de workspace (puede incluir rutas locales o secrets)
+# ══════════════════════════════════════════════════════════════════════════════
+
+**/.vscode/
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DEPENDENCIAS
+# ══════════════════════════════════════════════════════════════════════════════
+
+node_modules/
+.pnp
+.pnp.js
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BUILD / ARTEFACTOS GENERADOS
+# ══════════════════════════════════════════════════════════════════════════════
+
+build/
+dist/
+out/
+coverage/
+.next/
+.nuxt/
+
+# Binarios y archivos comprimidos que no son código fuente (tarballs, zips)
+**/*.tar.gz
+**/*.zip
+
+# Contratos Clarity sueltos en la raíz del proyecto web (solo eran para contexto)
+StacksMarket_web/*.clar
+
+# JS minificado externo (artefacto temporal de 2.7 MB)
+StacksMarket_web/temp_velar_index.js
+
+# Favicons generados y assets de build en raíz (no son código fuente)
+StacksMarket_web/_site_*
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LOGS
+# ══════════════════════════════════════════════════════════════════════════════
+
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SISTEMA OPERATIVO
+# ══════════════════════════════════════════════════════════════════════════════
+
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ══════════════════════════════════════════════════════════════════════════════
+# IDEs Y EDITORES
+# ══════════════════════════════════════════════════════════════════════════════
+
+.idea/
+*.swp
+*.swo
+*~
