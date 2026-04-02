@@ -1,0 +1,12 @@
+services:
+  mongo-verify:
+    image: mongo:7
+    container_name: mongo-verify
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-verify-data:/data/db
+
+volumes:
+  mongo-verify-data:

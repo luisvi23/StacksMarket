@@ -1,0 +1,17 @@
+id: 0
+name: Mainnet deployment
+network: mainnet
+stacks-node: https://api.hiro.so
+bitcoin-node: http://blockstack:blockstacksystem@bitcoin.blockstack.com:8332
+plan:
+  batches:
+  - id: 0
+    transactions:
+    - transaction-type: contract-publish
+      contract-name: market-factory-v20-bias
+      expected-sender: SP3N5CN0PE7YRRP29X7K9XG22BT861BRS5BN8HFFA
+      cost: 453510
+      path: contracts\market-factory-v20-bias.clar
+      anchor-block-only: true
+      clarity-version: 4
+    epoch: '3.3'

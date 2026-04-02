@@ -1,0 +1,18 @@
+[project]
+name        = "bitcoinworld-cont"
+telemetry   = true
+cache_dir   = "./.cache"
+requirements = []
+
+[editor]
+auto-pairs = false
+
+[networks]
+local   = { url = "http://localhost:20443" }
+testnet = { url = "https://stacks-node-api.testnet.stacks.co" }
+mainnet = { url = "https://stacks-node-api.mainnet.stacks.co" }
+
+[contracts.market-factory-v20-bias]
+path           = "contracts/market-factory-v20-bias.clar"
+clarity_version = 4
+epoch          = "3.3"

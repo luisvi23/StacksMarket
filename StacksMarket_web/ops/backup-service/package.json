@@ -1,0 +1,18 @@
+{
+  "name": "backup-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MongoDB Atlas M0 backups to S3 with restore verification",
+  "type": "commonjs",
+  "scripts": {
+    "backup": "node src/cli.js backup",
+    "restore": "node src/cli.js restore",
+    "verify": "node src/cli.js verify",
+    "doctor": "node src/cli.js doctor"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.892.0",
+    "@aws-sdk/lib-storage": "^3.892.0",
+    "dotenv": "^16.4.5"
+  }
+}

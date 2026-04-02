@@ -1,0 +1,34 @@
+{
+  "Rules": [
+    {
+      "ID": "mongodb-backups-transition",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "mongodb/"
+      },
+      "Transitions": [
+        {
+          "Days": 30,
+          "StorageClass": "GLACIER_IR"
+        },
+        {
+          "Days": 180,
+          "StorageClass": "DEEP_ARCHIVE"
+        }
+      ],
+      "NoncurrentVersionTransitions": [
+        {
+          "NoncurrentDays": 30,
+          "StorageClass": "GLACIER_IR"
+        },
+        {
+          "NoncurrentDays": 180,
+          "StorageClass": "DEEP_ARCHIVE"
+        }
+      ],
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      }
+    }
+  ]
+}
