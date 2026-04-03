@@ -113,6 +113,7 @@ app.use("/api/comments", require("./routes/comments"));
 app.use("/api/stacks", require("./routes/stacks"));
 app.use("/api/market", require("./routes/market"));
 app.use("/api/uploads", require("./routes/uploads"));
+app.use("/api/ladder", require("./routes/ladder"));
 
 // Socket.io for real-time updates
 io.on("connection", (socket) => {

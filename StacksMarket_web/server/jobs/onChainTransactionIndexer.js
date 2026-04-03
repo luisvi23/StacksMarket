@@ -4,6 +4,7 @@ const Poll = require("../models/Poll");
 const Trade = require("../models/Trade");
 const Transaction = require("../models/Transaction");
 const User = require("../models/User");
+const LadderGroup = require("../models/LadderGroup");
 const { syncPollOddsFromOnChainSnapshot, fetchParsedMarketSnapshot, deriveBinaryProbabilities } = require("../utils/onChainOddsSync");
 
 const KNOWN_FUNCTIONS = {
@@ -45,6 +46,11 @@ const KNOWN_FUNCTIONS = {
   "set-market-close-time": { kind: "admin", amountArg: null, totalArg: null, totalKind: "n/a" },
   pause: { kind: "admin", amountArg: null, totalArg: null, totalKind: "n/a" },
   unpause: { kind: "admin", amountArg: null, totalArg: null, totalKind: "n/a" },
+  // Ladder / scalar market functions (v21)
+  "create-ladder-group": { kind: "admin", amountArg: null, totalArg: null, totalKind: "n/a" },
+  "add-rung": { kind: "add-rung", amountArg: null, totalArg: null, totalKind: "n/a" },
+  "resolve-ladder-group": { kind: "resolve-ladder-group", amountArg: null, totalArg: null, totalKind: "n/a" },
+  "resolve-rung": { kind: "resolve-rung", amountArg: null, totalArg: null, totalKind: "n/a" },
 };
 
 const FAILED_STATUSES = new Set([
@@ -514,6 +520,65 @@ async function applyPollSideEffects({ poll, functionName, txStatus, args }) {
   }
 }
 
+/**
+ * Handle ladder-group-level side effects that don't map to a single Poll.
+ * Called from upsertFromContractTx for resolve-ladder-group, resolve-rung, add-rung.
+ */
+async function applyLadderSideEffects({ functionName, txStatus, rawArgs }) {
+  if (txStatus !== "success") return;
+
+  if (functionName === "resolve-ladder-group") {
+    // args: (g: uint) (final-value: uint)
+    // rawArgs[0] = group id repr, rawArgs[1] = final value repr
+    const groupId = parseUIntRepr(rawArgs[0]);
+    const finalValue = parseUIntRepr(rawArgs[1]);
+    if (!Number.isFinite(groupId)) return;
+
+    const update = { status: "resolving" };
+    if (Number.isFinite(finalValue)) {
+      update.finalValue = finalValue;
+    }
+
+    await LadderGroup.findOneAndUpdate({ groupId }, { $set: update });
+    return;
+  }
+
+  if (functionName === "resolve-rung") {
+    // args: (m: uint)
+    // rawArgs[0] = market id repr
+    const marketId = parseUIntRepr(rawArgs[0]);
+    if (!Number.isFinite(marketId)) return;
+
+    // The actual resolution outcome is determined by resolve-rung on-chain using
+    // the stored final-value. We just mark the rung's group as "resolving" if not
+    // already resolved — the full resolution is handled by resolve-ladder-group.
+    const poll = await Poll.findOne({ marketId: String(marketId) }).select(
+      "_id ladderGroupId"
+    );
+    if (!poll?.ladderGroupId) return;
+
+    await LadderGroup.findOneAndUpdate(
+      { groupId: poll.ladderGroupId, status: "active" },
+      { $set: { status: "resolving" } }
+    );
+    return;
+  }
+
+  if (functionName === "add-rung") {
+    // args: (g: uint) (m: uint) (threshold: uint) (operator: string) (label: string) (initial-liquidity: uint)
+    // rawArgs[0] = group id, rawArgs[1] = market id
+    // No automatic DB side-effect here beyond what the admin REST route already handles.
+    // Log for audit purposes only.
+    const groupId = parseUIntRepr(rawArgs[0]);
+    const marketId = parseUIntRepr(rawArgs[1]);
+    if (Number.isFinite(groupId) && Number.isFinite(marketId)) {
+      console.log(
+        `[onchain-indexer] add-rung detected: groupId=${groupId} marketId=${marketId}`
+      );
+    }
+  }
+}
+
 // Extract actual STX amount from tx events (exact, not a slippage bound)
 // For buys:  find stx_transfer sender=walletAddress → recipient=contractId
 // For sells: find stx_transfer sender=contractId    → recipient=walletAddress
@@ -649,6 +714,15 @@ async function upsertFromContractTx({ tx, contractId, io }) {
   }
 
   await applyPollSideEffects({ poll, functionName, txStatus, args: rawArgs });
+
+  // Handle ladder-specific side effects (resolve-ladder-group, resolve-rung, add-rung)
+  if (
+    functionName === "resolve-ladder-group" ||
+    functionName === "resolve-rung" ||
+    functionName === "add-rung"
+  ) {
+    await applyLadderSideEffects({ functionName, txStatus, rawArgs });
+  }
 
   return {
     processed: true,

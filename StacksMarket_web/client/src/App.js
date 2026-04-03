@@ -29,6 +29,7 @@ const Learn = React.lazy(() => import('./pages/Learn'));
 const FAQ = React.lazy(() => import('./pages/FAQ'));
 const NotFound = React.lazy(() => import('./pages/NotFound'));
 const WalletDebug = React.lazy(() => import('./pages/WalletDebug'));
+const LadderGroupDetail = React.lazy(() => import('./pages/LadderGroupDetail'));
 
 function App() {
   const { loading } = useAuth();
@@ -60,6 +61,7 @@ function App() {
             <Route path="elections" element={<Elections />} />
             <Route path="trending" element={<Trending />} />
             <Route path="poll/:id" element={<PollDetail />} />
+            <Route path="ladder/:groupId" element={<LadderGroupDetail />} />
             <Route path="privacy" element={<Privacy />} />
             <Route path="terms" element={<Terms />} />
             <Route path="learn" element={<Learn />} />

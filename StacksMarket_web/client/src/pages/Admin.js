@@ -21,6 +21,12 @@ import {
   resetMarketBias,
   redeem as redeemOnChain,
 } from "../contexts/stacks/marketClient";
+import {
+  createLadderGroup,
+  addRung,
+  resolveLadderGroup,
+  resolveRung,
+} from "../contexts/stacks/ladderClient";
 
 import toast from "react-hot-toast";
 import { formatStx, stxToUstx } from "../utils/stx";
@@ -682,6 +688,168 @@ const Admin = () => {
     []
   );
 
+  // ===== LADDER STATE =====
+  const [ladderCreating, setLadderCreating] = useState(false);
+  const [ladderResolvingGroupId, setLadderResolvingGroupId] = useState(null);
+  const [ladderFinalValue, setLadderFinalValue] = useState("");
+
+  const emptyLadderForm = {
+    groupId: "",
+    title: "",
+    source: "",
+    closeDate: "",
+    rungs: [{ marketId: "", threshold: "", operator: "gte", label: "", initialLiquidity: "" }],
+  };
+  const [ladderForm, setLadderForm] = useState(emptyLadderForm);
+
+  const { data: ladderGroupsData, refetch: refetchLadderGroups } = useQuery(
+    ["admin-ladder-groups"],
+    async () => {
+      const res = await axios.get(`${BACKEND_URL}/api/ladder/groups?limit=50`);
+      return res.data;
+    },
+    { staleTime: 30 * 1000 }
+  );
+  const ladderGroups = ladderGroupsData?.groups || [];
+
+  const addLadderRung = () => {
+    setLadderForm((prev) => ({
+      ...prev,
+      rungs: [
+        ...prev.rungs,
+        { marketId: "", threshold: "", operator: "gte", label: "", initialLiquidity: "" },
+      ],
+    }));
+  };
+
+  const updateLadderRung = (index, field, value) => {
+    setLadderForm((prev) => {
+      const rungs = [...prev.rungs];
+      rungs[index] = { ...rungs[index], [field]: value };
+      return { ...prev, rungs };
+    });
+  };
+
+  const removeLadderRung = (index) => {
+    setLadderForm((prev) => ({
+      ...prev,
+      rungs: prev.rungs.filter((_, i) => i !== index),
+    }));
+  };
+
+  const createLadderMutation = useMutation(
+    async () => {
+      const g = Number(ladderForm.groupId);
+      if (!Number.isFinite(g) || g <= 0) throw new Error("Invalid Group ID");
+      if (!ladderForm.title.trim()) throw new Error("Title is required");
+      if (!ladderForm.closeDate) throw new Error("Close date is required");
+
+      const closeSec = Math.floor(new Date(ladderForm.closeDate).getTime() / 1000);
+      if (!Number.isFinite(closeSec)) throw new Error("Invalid close date");
+
+      if (ladderForm.rungs.length === 0) throw new Error("Add at least one rung");
+      for (const [i, r] of ladderForm.rungs.entries()) {
+        const m = Number(r.marketId);
+        const t = Number(r.threshold);
+        const liq = Number(r.initialLiquidity) * 1_000_000; // STX -> uSTX
+        if (!Number.isFinite(m) || m <= 0) throw new Error(`Rung ${i + 1}: invalid Market ID`);
+        if (!Number.isFinite(t) || t < 0) throw new Error(`Rung ${i + 1}: invalid threshold`);
+        if (!Number.isFinite(liq) || liq <= 0) throw new Error(`Rung ${i + 1}: invalid initial liquidity`);
+        if (!r.label.trim()) throw new Error(`Rung ${i + 1}: label is required`);
+      }
+
+      // 1. Create ladder group on-chain
+      const txGroup = await createLadderGroup(g, ladderForm.title.trim(), ladderForm.source.trim(), closeSec);
+
+      // 2. Register in backend
+      await axios.post(`${BACKEND_URL}/api/ladder/groups`, {
+        groupId: g,
+        title: ladderForm.title.trim(),
+        resolutionSource: ladderForm.source.trim(),
+        closeTime: closeSec,
+        createTxId: txGroup.txId,
+      });
+
+      // 3. Add each rung on-chain then register in backend
+      for (const r of ladderForm.rungs) {
+        const m = Number(r.marketId);
+        const t = Number(r.threshold);
+        const liq = Math.round(Number(r.initialLiquidity) * 1_000_000);
+        const op = (r.operator || "gte").slice(0, 3);
+        const lbl = r.label.trim().slice(0, 50);
+
+        const txRung = await addRung(g, m, t, op, lbl, liq);
+
+        try {
+          await axios.post(`${BACKEND_URL}/api/ladder/groups/${g}/rungs`, {
+            marketId: m,
+            threshold: t,
+            operator: op,
+            label: lbl,
+            initialLiquidity: liq,
+            addTxId: txRung.txId,
+          });
+        } catch (err) {
+          console.warn(`[Admin] Failed to register rung ${m} in backend:`, err?.message);
+        }
+      }
+
+      return { groupId: g };
+    },
+    {
+      onSuccess: () => {
+        setLadderCreating(false);
+        setLadderForm(emptyLadderForm);
+        refetchLadderGroups();
+        toast.success("Ladder group created");
+      },
+      onError: (err) => toast.error(err?.message || "Failed to create ladder group"),
+    }
+  );
+
+  const resolveLadderMutation = useMutation(
+    async ({ groupId, finalValue }) => {
+      const g = Number(groupId);
+      const fv = Number(finalValue);
+      if (!Number.isFinite(g) || g <= 0) throw new Error("Invalid group ID");
+      if (!Number.isFinite(fv) || fv < 0) throw new Error("Invalid final value");
+
+      // 1. Resolve group on-chain (stores final value)
+      const txGroup = await resolveLadderGroup(g, fv);
+
+      // 2. Notify backend
+      await axios.post(`${BACKEND_URL}/api/ladder/groups/${g}/resolve`, {
+        finalValue: fv,
+        txId: txGroup.txId,
+      });
+
+      // 3. Resolve each rung on-chain
+      const group = ladderGroups.find((gr) => Number(gr.groupId) === g);
+      const rungs = group?.rungs || [];
+      for (const r of rungs) {
+        try {
+          const m = Number(r.marketId);
+          if (Number.isFinite(m) && m > 0) {
+            await resolveRung(m);
+          }
+        } catch (err) {
+          console.warn(`[Admin] resolveRung failed for ${r.marketId}:`, err?.message);
+        }
+      }
+
+      return { groupId: g };
+    },
+    {
+      onSuccess: () => {
+        setLadderResolvingGroupId(null);
+        setLadderFinalValue("");
+        refetchLadderGroups();
+        toast.success("Ladder group resolved");
+      },
+      onError: (err) => toast.error(err?.message || "Failed to resolve ladder group"),
+    }
+  );
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -1007,6 +1175,300 @@ const Admin = () => {
             </button>
           </div>
         </div>
+        {/* ===== LADDER MARKETS SECTION ===== */}
+        <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+              Mercados Escalera (Scalar/Ladder)
+            </h2>
+            <button onClick={() => setLadderCreating(true)} className="btn-primary">
+              Crear Grupo Escalera
+            </button>
+          </div>
+
+          {/* Existing ladder groups table */}
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-500 dark:text-gray-400">
+                  <th className="py-2 pr-4">Group ID</th>
+                  <th className="py-2 pr-4">Titulo</th>
+                  <th className="py-2 pr-4">Estado</th>
+                  <th className="py-2 pr-4">Rungs</th>
+                  <th className="py-2 pr-4">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ladderGroups.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-6 text-gray-400 dark:text-gray-500">
+                      No hay grupos escalera registrados.
+                    </td>
+                  </tr>
+                ) : (
+                  ladderGroups.map((g) => (
+                    <tr
+                      key={g._id ?? g.groupId}
+                      className="border-t border-gray-100 dark:border-gray-700"
+                    >
+                      <td className="py-2 pr-4 text-gray-900 dark:text-gray-100 font-mono">
+                        {g.groupId}
+                      </td>
+                      <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">
+                        {g.title}
+                      </td>
+                      <td className="py-2 pr-4">
+                        <span
+                          className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
+                            String(g.status || "").toLowerCase() === "resolved"
+                              ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                              : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400"
+                          }`}
+                        >
+                          {g.status || "active"}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">
+                        {(g.rungs || []).length}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {String(g.status || "").toLowerCase() !== "resolved" && (
+                          <div className="flex items-center gap-2">
+                            {ladderResolvingGroupId === g.groupId ? (
+                              <>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  className="input w-28"
+                                  placeholder="Valor final"
+                                  value={ladderFinalValue}
+                                  onChange={(e) => setLadderFinalValue(e.target.value)}
+                                />
+                                <button
+                                  onClick={() =>
+                                    resolveLadderMutation.mutate({
+                                      groupId: g.groupId,
+                                      finalValue: ladderFinalValue,
+                                    })
+                                  }
+                                  disabled={resolveLadderMutation.isLoading || !ladderFinalValue}
+                                  className="btn-primary btn-sm disabled:opacity-50"
+                                >
+                                  {resolveLadderMutation.isLoading ? "..." : "Confirmar"}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setLadderResolvingGroupId(null);
+                                    setLadderFinalValue("");
+                                  }}
+                                  className="btn-outline btn-sm"
+                                >
+                                  Cancelar
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => setLadderResolvingGroupId(g.groupId)}
+                                className="btn-outline btn-sm"
+                              >
+                                Resolver
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Create Ladder Group modal */}
+        {ladderCreating && (
+          <div className="modal-overlay" onClick={() => setLadderCreating(false)}>
+            <div
+              className="modal-content max-w-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6">
+                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">
+                  Crear Grupo Escalera
+                </h2>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
+                      Group ID (uint)
+                    </label>
+                    <input
+                      className="input w-full"
+                      type="number"
+                      min="1"
+                      value={ladderForm.groupId}
+                      onChange={(e) => setLadderForm({ ...ladderForm, groupId: e.target.value })}
+                      placeholder="e.g. 1001"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
+                      Fecha de cierre
+                    </label>
+                    <input
+                      className="input w-full"
+                      type="datetime-local"
+                      value={ladderForm.closeDate}
+                      onChange={(e) => setLadderForm({ ...ladderForm, closeDate: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
+                      Titulo
+                    </label>
+                    <input
+                      className="input w-full"
+                      value={ladderForm.title}
+                      onChange={(e) => setLadderForm({ ...ladderForm, title: e.target.value })}
+                      placeholder="e.g. Will BTC reach $X by date?"
+                    />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
+                      Fuente de resolucion
+                    </label>
+                    <input
+                      className="input w-full"
+                      value={ladderForm.source}
+                      onChange={(e) => setLadderForm({ ...ladderForm, source: e.target.value })}
+                      placeholder="e.g. CoinGecko BTC/USD price at close"
+                    />
+                  </div>
+                </div>
+
+                {/* Rungs */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Rungs (escalones)
+                    </h3>
+                    <button onClick={addLadderRung} className="btn-outline btn-sm">
+                      + Agregar rung
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {ladderForm.rungs.map((rung, i) => (
+                      <div
+                        key={i}
+                        className="grid grid-cols-2 md:grid-cols-5 gap-2 p-3 bg-gray-50 dark:bg-gray-700/40 rounded-lg"
+                      >
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                            Market ID
+                          </label>
+                          <input
+                            className="input w-full text-sm"
+                            type="number"
+                            min="1"
+                            placeholder="uint"
+                            value={rung.marketId}
+                            onChange={(e) => updateLadderRung(i, "marketId", e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                            Threshold
+                          </label>
+                          <input
+                            className="input w-full text-sm"
+                            type="number"
+                            min="0"
+                            placeholder="e.g. 110000"
+                            value={rung.threshold}
+                            onChange={(e) => updateLadderRung(i, "threshold", e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                            Operador
+                          </label>
+                          <select
+                            className="input w-full text-sm"
+                            value={rung.operator}
+                            onChange={(e) => updateLadderRung(i, "operator", e.target.value)}
+                          >
+                            <option value="gte">&gt;= (gte)</option>
+                            <option value="lte">&lt;= (lte)</option>
+                            <option value="eq">= (eq)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                            Label
+                          </label>
+                          <input
+                            className="input w-full text-sm"
+                            placeholder="e.g. $110k"
+                            value={rung.label}
+                            onChange={(e) => updateLadderRung(i, "label", e.target.value)}
+                          />
+                        </div>
+                        <div className="flex flex-col">
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                            Liquidez inicial (STX)
+                          </label>
+                          <div className="flex gap-1">
+                            <input
+                              className="input flex-1 text-sm"
+                              type="number"
+                              min="0"
+                              placeholder="STX"
+                              value={rung.initialLiquidity}
+                              onChange={(e) => updateLadderRung(i, "initialLiquidity", e.target.value)}
+                            />
+                            {ladderForm.rungs.length > 1 && (
+                              <button
+                                onClick={() => removeLadderRung(i)}
+                                className="text-rose-500 hover:text-rose-700 px-1 text-lg font-bold"
+                                title="Remove rung"
+                              >
+                                &times;
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 justify-end">
+                  <button
+                    className="btn-outline"
+                    onClick={() => {
+                      setLadderCreating(false);
+                      setLadderForm(emptyLadderForm);
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    className="btn-primary"
+                    onClick={() => createLadderMutation.mutate()}
+                    disabled={createLadderMutation.isLoading}
+                  >
+                    {createLadderMutation.isLoading ? "Creando..." : "Crear on-chain"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Create modal */}
         {creating && (
           <div className="modal-overlay" onClick={() => setCreating(false)}>
