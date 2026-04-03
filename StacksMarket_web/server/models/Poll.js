@@ -251,6 +251,36 @@ const pollSchema = new mongoose.Schema(
       city: String,
     },
 
+    // Ladder / scalar market fields
+    marketType: {
+      type: String,
+      enum: ["binary", "ladder"],
+      default: "binary",
+    },
+    ladderGroupId: {
+      type: Number,
+      default: null,
+    },
+    ladderGroupRef: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "LadderGroup",
+      default: null,
+    },
+    // threshold stored as threshold * 100 to avoid float precision issues
+    ladderThreshold: {
+      type: Number,
+      default: null,
+    },
+    ladderOperator: {
+      type: String,
+      enum: ["gte", "lte", null],
+      default: null,
+    },
+    ladderLabel: {
+      type: String,
+      default: null,
+    },
+
     // Has the market's reward been claimed (server-side flag)
     rewardClaimed: {
       type: Boolean,

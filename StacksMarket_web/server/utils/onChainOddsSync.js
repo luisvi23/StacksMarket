@@ -1,5 +1,6 @@
 const axios = require("axios");
 const Poll = require("../models/Poll");
+const LadderGroup = require("../models/LadderGroup");
 const { cvToHex, cvToJSON, deserializeCV, uintCV } = require("@stacks/transactions");
 const { buildActiveMarketFilter } = require("./marketState");
 
@@ -199,10 +200,107 @@ async function syncAllActiveMarkets({ logger = console, timeoutMs } = {}) {
   return { synced, failed };
 }
 
+/**
+ * Fetch on-chain ladder group info via Hiro call-read and update MongoDB if
+ * the resolved status has changed.
+ *
+ * Contract read-only: get-ladder-group-info (g: uint)
+ * Expected tuple fields: { finalValue: uint, status: ascii, ... }
+ */
+async function syncLadderGroup(groupId, { logger = console, timeoutMs = 8000 } = {}) {
+  try {
+    const { address, name } = getContractConfig();
+    const hiroBase = getHiroBaseUrl();
+    const hiroApiKey = process.env.HIRO_API_KEY;
+
+    const hiroUrl = `${hiroBase}/v2/contracts/call-read/${address}/${name}/get-ladder-group-info`;
+    const payload = {
+      sender: address,
+      arguments: [cvToHex(uintCV(BigInt(groupId)))],
+    };
+
+    const response = await axios.post(hiroUrl, payload, {
+      timeout: timeoutMs,
+      headers: {
+        "Content-Type": "application/json",
+        ...(hiroApiKey ? { "x-api-key": hiroApiKey } : {}),
+      },
+    });
+
+    if (!response?.data?.okay || !response?.data?.result) {
+      logger.warn?.(
+        `[ladder-sync] get-ladder-group-info returned not-okay for groupId=${groupId}: ${JSON.stringify(
+          response?.data || {}
+        )}`
+      );
+      return { synced: false, reason: "hiro-not-okay" };
+    }
+
+    const cv = deserializeCV(response.data.result);
+    const tupleJson = cvToJSON(cv);
+
+    // Unwrap (ok (tuple ...)) or (some (tuple ...))
+    const fields =
+      tupleJson?.value?.value?.value ??
+      tupleJson?.value?.value ??
+      tupleJson?.value;
+
+    if (!fields) {
+      return { synced: false, reason: "unexpected-cv-shape" };
+    }
+
+    // Extract final-value — contract stores it as a uint (0 when not yet resolved)
+    const rawFinalValue = toBigIntOrNull(fields["final-value"]?.value ?? fields["final-value"]);
+    // Extract resolved status — contract may expose a boolean or status string
+    const rawResolved = fields["resolved"]?.value ?? fields["is-resolved"]?.value;
+
+    const isResolvedOnChain =
+      rawResolved === true ||
+      rawResolved === "true" ||
+      String(rawResolved || "").toLowerCase() === "true";
+
+    const group = await LadderGroup.findOne({ groupId: Number(groupId) });
+    if (!group) {
+      return { synced: false, reason: "group-not-found-in-db" };
+    }
+
+    let changed = false;
+
+    if (isResolvedOnChain && group.status !== "resolved") {
+      group.status = "resolved";
+      group.resolvedAt = group.resolvedAt || new Date();
+      changed = true;
+    }
+
+    if (rawFinalValue != null) {
+      const numericFinalValue = Number(rawFinalValue);
+      if (Number.isFinite(numericFinalValue) && group.finalValue !== numericFinalValue) {
+        group.finalValue = numericFinalValue;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await group.save();
+      logger.log?.(
+        `[ladder-sync] groupId=${groupId} updated status=${group.status} finalValue=${group.finalValue}`
+      );
+    }
+
+    return { synced: true, changed, groupId: group.groupId, status: group.status, finalValue: group.finalValue };
+  } catch (error) {
+    logger.warn?.(
+      `[ladder-sync] failed groupId=${groupId}: ${error?.message || error}`
+    );
+    return { synced: false, reason: error?.message || "unknown-error" };
+  }
+}
+
 module.exports = {
   syncPollOddsFromOnChainSnapshot,
   syncAllActiveMarkets,
   fetchMarketSnapshotTuple,
   fetchParsedMarketSnapshot,
   deriveBinaryProbabilities,
+  syncLadderGroup,
 };

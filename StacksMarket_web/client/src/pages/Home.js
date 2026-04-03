@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "react-query";
-import { FaCheckCircle, FaPlayCircle } from "react-icons/fa";
+import { FaCheckCircle, FaPlayCircle, FaLayerGroup } from "react-icons/fa";
 import axios from "../setupAxios";
 import PollCard from "../components/polls/PollCard";
+import LadderGroupCard from "../components/ladder/LadderGroupCard";
 import LoadingSpinner from "../components/common/LoadingSpinner";
 import logo from "../assets/imgs/sm-logo-white.png";
 import { BACKEND_URL } from "../contexts/Bakendurl";
@@ -47,6 +48,21 @@ const Home = () => {
       refetchOnReconnect: false,
     }
   );
+
+  const { data: ladderData, isLoading: ladderLoading } = useQuery(
+    ["home-ladder-groups"],
+    async () => {
+      const response = await axios.get(`${BACKEND_URL}/api/ladder/groups?status=active&limit=12`);
+      return response.data;
+    },
+    {
+      staleTime: 60 * 1000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    }
+  );
+
+  const ladderGroups = ladderData?.groups || [];
 
   const sortByNewest = (list = []) =>
     [...list].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -175,6 +191,44 @@ const Home = () => {
           </div>
         </div>
       </section>
+
+      {/* Ladder / Scalar Markets Section */}
+      {(ladderLoading || ladderGroups.length > 0) && (
+        <section className="py-10">
+          <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-10">
+            <div className="border border-gray-200 dark:border-[#1f2937] rounded-2xl bg-white dark:bg-[#0b1220] px-5 py-5">
+              <div className="flex items-center justify-between pb-4 border-b border-gray-200 dark:border-[#1f2937]">
+                <div className="flex items-center gap-2">
+                  <FaLayerGroup className="w-5 h-5 text-sky-500" />
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                    Scalar Markets
+                  </h2>
+                </div>
+              </div>
+
+              {ladderLoading ? (
+                <div className="flex justify-center py-10">
+                  <LoadingSpinner size="lg" />
+                </div>
+              ) : (
+                <div className="mt-5 grid gap-4 grid-cols-1 sm:[grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
+                  {ladderGroups.map((group) => (
+                    <LadderGroupCard
+                      key={group._id ?? group.groupId}
+                      group={group}
+                    />
+                  ))}
+                  {ladderGroups.length === 0 && (
+                    <p className="text-sm text-gray-500 dark:text-slate-300">
+                      No active scalar markets right now.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="bg-gradient-to-br from-stacks-700 via-stacks-600 to-stacks-500 text-white">
         <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-10 py-16 md:py-20">
