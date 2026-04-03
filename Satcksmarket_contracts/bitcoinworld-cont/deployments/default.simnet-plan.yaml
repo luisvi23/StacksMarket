@@ -65,11 +65,11 @@ plan:
     - transaction-type: emulated-contract-publish
       contract-name: market-factory-v20-bias
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts\market-factory-v20-bias.clar
-      clarity-version: 4
+      path: contracts/market-factory-v20-bias.clar
+      clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: market-factory-v21-bias
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts\market-factory-v21-bias.clar
-      clarity-version: 4
-    epoch: '3.3'
+      path: contracts/market-factory-v21-bias.clar
+      clarity-version: 3
+    epoch: '3.2'
