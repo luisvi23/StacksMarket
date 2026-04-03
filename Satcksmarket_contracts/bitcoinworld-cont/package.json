@@ -17,18 +17,18 @@
   "license": "ISC",
   "dependencies": {
     "chokidar-cli": "^3.0.0",
-    "cross-fetch": "^4.1.0",
-    "vitest-environment-clarinet": "^2.3.0"
+    "cross-fetch": "^4.1.0"
   },
   "devDependencies": {
-    "@hirosystems/clarinet-sdk": "^3.4.0",
+    "@hirosystems/clarinet-sdk": "^3.8.1",
     "@stacks/network": "^7.2.0",
     "@stacks/transactions": "^7.2.0",
     "@types/node": "^24.2.0",
     "matchers": "^0.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "vitest-environment-clarinet": "^3.0.2"
   },
   "main": "vitest.config.js",
   "directories": {
