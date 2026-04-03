@@ -9,10 +9,10 @@ plan:
     - id: 0
       transactions:
         - contract-publish:
-            contract-name: market-factory-v20-6-bias
+            contract-name: market-factory-v21-bias
             expected-sender: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
-            cost: 459160
-            path: "contracts\\market-factory-v20-6-bias.clar"
+            cost: 470000
+            path: "contracts/market-factory-v21-bias.clar"
             anchor-block-only: true
             clarity-version: 4
       epoch: "3.3"

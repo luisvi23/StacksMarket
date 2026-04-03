@@ -1473,7 +1473,7 @@
 ;;
 ;; All threshold / final-value inputs are multiplied by 100 by the
 ;; caller so that 2 decimal places of precision are preserved while
-;; staying in uint (e.g. $100.50 → 10050).
+;; staying in uint (e.g. $100.50 = 10050).
 ;;
 ;; New error codes start at u800 to avoid collisions with v20 codes.
 ;; ===========================================================
@@ -1507,7 +1507,7 @@
 (define-map rung-group     { m: uint } { g: uint })
 ;; Threshold * 100 (2 decimal places) the rung tests against
 (define-map rung-threshold { m: uint } { v: uint })
-;; "gte" → YES if final-value >= threshold; "lte" → YES if final-value <= threshold
+;; "gte": YES if final-value >= threshold; "lte": YES if final-value <= threshold
 (define-map rung-operator  { m: uint } { op: (string-ascii 3) })
 ;; Human-readable label shown in the UI (e.g. "$100", "$110")
 (define-map rung-label     { m: uint } { label: (string-ascii 50) })
@@ -1622,7 +1622,7 @@
 
 ;; resolve-ladder-group
 ;; Admin records the final observed value for a group and marks it as resolved.
-;; This does NOT auto-resolve individual rungs — call resolve-rung per rung.
+;; This does NOT auto-resolve individual rungs. Call resolve-rung per rung.
 (define-public (resolve-ladder-group (g uint) (final-value uint))
   (begin
     (try! (only-admin))
