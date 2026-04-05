@@ -15,9 +15,14 @@ mainnet = { url = "https://stacks-node-api.mainnet.stacks.co" }
 [contracts.market-factory-v20-bias]
 path           = "contracts/market-factory-v20-bias.clar"
 clarity_version = 4
-epoch          = "3.2"
+epoch          = "3.4"
 
 [contracts.market-factory-v21-bias]
 path           = "contracts/market-factory-v21-bias.clar"
 clarity_version = 4
-epoch          = "3.2"
+epoch          = "3.4"
+
+[contracts.market-factory-v21-testnet-bias]
+path           = "contracts/market-factory-v21-testnet-bias.clar"
+clarity_version = 4
+epoch          = "3.4"

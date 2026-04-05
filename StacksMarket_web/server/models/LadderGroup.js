@@ -21,6 +21,10 @@ const ladderGroupSchema = new mongoose.Schema(
       trim: true,
       maxlength: 200,
     },
+    image: {
+      type: String,
+      default: null,
+    },
     closeTime: {
       type: Date,
       default: null,
@@ -36,6 +40,16 @@ const ladderGroupSchema = new mongoose.Schema(
     },
     resolvedAt: {
       type: Date,
+      default: null,
+    },
+    isPublic: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    commentPollRef: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Poll",
       default: null,
     },
     polls: [

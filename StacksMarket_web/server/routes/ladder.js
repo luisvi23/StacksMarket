@@ -3,6 +3,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const LadderGroup = require("../models/LadderGroup");
 const Poll = require("../models/Poll");
+const Trade = require("../models/Trade");
 const { adminAuth } = require("../middleware/auth");
 
 const router = express.Router();
@@ -27,7 +28,7 @@ function computeRungOutcome(finalValue, threshold, operator) {
 // @access  Private (Admin)
 router.post("/groups", adminAuth, async (req, res) => {
   try {
-    const { groupId, title, resolutionSource, closeTime } = req.body;
+    const { groupId, title, resolutionSource, closeTime, image } = req.body;
 
     if (groupId == null || !title || !resolutionSource) {
       return res.status(400).json({
@@ -40,11 +41,26 @@ router.post("/groups", adminAuth, async (req, res) => {
       return res.status(409).json({ message: "Ladder group with that groupId already exists" });
     }
 
+    // Create a sentinel Poll used only as the comment thread anchor for this group
+    const sentinelPoll = new Poll({
+      title: String(title).trim(),
+      description: String(resolutionSource || title).trim(),
+      category: "Crypto",
+      subCategory: "All",
+      createdBy: req.user._id,
+      options: [{ text: "Yes" }, { text: "No" }],
+      endDate: closeTime ? new Date(Number(closeTime) * 1000) : new Date(Date.now() + 365 * 24 * 3600 * 1000),
+      marketType: "ladder-comment",
+    });
+    await sentinelPoll.save();
+
     const group = new LadderGroup({
       groupId: Number(groupId),
       title: String(title).trim(),
       resolutionSource: String(resolutionSource).trim(),
-      closeTime: closeTime ? new Date(closeTime) : null,
+      closeTime: closeTime ? new Date(Number(closeTime) * 1000) : null,
+      image: image ? String(image).trim() : null,
+      commentPollRef: sentinelPoll._id,
     });
 
     await group.save();
@@ -76,16 +92,17 @@ router.get("/groups", adminAuth, async (req, res) => {
 });
 
 // @route   POST /api/ladder/groups/:groupId/rungs
-// @desc    Add a rung to a ladder group (links an existing Poll to the group)
+// @desc    Register a rung: creates a Poll for it and links it to the ladder group.
+//          On-chain market creation (add-rung) is handled by the frontend before calling this.
 // @access  Private (Admin)
 router.post("/groups/:groupId/rungs", adminAuth, async (req, res) => {
   try {
     const { groupId } = req.params;
-    const { marketId, threshold, operator, label, pollId } = req.body;
+    const { marketId, threshold, operator, label, initialLiquidity, addTxId } = req.body;
 
-    if (marketId == null || threshold == null || !operator || !pollId) {
+    if (marketId == null || threshold == null || !operator) {
       return res.status(400).json({
-        message: "marketId, threshold, operator, and pollId are required",
+        message: "marketId, threshold, and operator are required",
       });
     }
 
@@ -93,44 +110,47 @@ router.post("/groups/:groupId/rungs", adminAuth, async (req, res) => {
       return res.status(400).json({ message: "operator must be 'gte' or 'lte'" });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(pollId)) {
-      return res.status(400).json({ message: "pollId is not a valid ObjectId" });
-    }
-
     const group = await LadderGroup.findOne({ groupId: Number(groupId) });
     if (!group) {
       return res.status(404).json({ message: "Ladder group not found" });
     }
 
-    const poll = await Poll.findById(pollId);
-    if (!poll) {
-      return res.status(404).json({ message: "Poll not found" });
-    }
+    // Create a Poll document for this rung
+    const rungTitle = label
+      ? `${group.title} — ${label}`
+      : `${group.title} (threshold ${threshold})`;
 
-    // Update poll with ladder metadata
-    poll.marketType = "ladder";
-    poll.ladderGroupId = Number(groupId);
-    poll.ladderGroupRef = group._id;
-    poll.ladderThreshold = Number(threshold);
-    poll.ladderOperator = operator;
-    poll.ladderLabel = label ? String(label).trim() : null;
-    if (marketId != null) {
-      poll.marketId = String(marketId);
-    }
+    const poll = new Poll({
+      marketId: String(marketId),
+      title: rungTitle,
+      description: group.resolutionSource || "",
+      category: "Crypto",
+      subCategory: "All",
+      createdBy: req.user._id,
+      options: [
+        { text: "Yes", percentage: 50 },
+        { text: "No", percentage: 50 },
+      ],
+      endDate: group.closeTime || null,
+      creationStatus: addTxId ? "pending" : "confirmed",
+      createTxId: addTxId || null,
+      marketType: "ladder",
+      ladderGroupId: Number(groupId),
+      ladderGroupRef: group._id,
+      ladderThreshold: Number(threshold),
+      ladderOperator: operator,
+      ladderLabel: label ? String(label).trim() : null,
+    });
+
     await poll.save();
 
-    // Add poll to group if not already present
-    const alreadyLinked = group.polls.some(
-      (id) => String(id) === String(poll._id)
-    );
-    if (!alreadyLinked) {
-      group.polls.push(poll._id);
-      await group.save();
-    }
+    // Link poll to group
+    group.polls.push(poll._id);
+    await group.save();
 
     const updatedGroup = await LadderGroup.findOne({ groupId: Number(groupId) }).populate("polls");
 
-    res.json({ message: "Rung added to ladder group", group: updatedGroup, poll });
+    res.status(201).json({ message: "Rung registered", group: updatedGroup, poll });
   } catch (error) {
     console.error("Add rung error:", error);
     res.status(500).json({ message: "Server error" });
@@ -263,7 +283,77 @@ router.get("/groups/:groupId/rungs/:marketId/outcome", adminAuth, async (req, re
   }
 });
 
-// ---------- PUBLIC route ----------
+// @route   PATCH /api/ladder/groups/:groupId/visibility
+// @desc    Toggle whether a ladder group appears on the public site
+// @access  Private (Admin)
+router.patch("/groups/:groupId/visibility", adminAuth, async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { isPublic } = req.body;
+
+    const group = await LadderGroup.findOneAndUpdate(
+      { groupId: Number(groupId) },
+      { isPublic: !!isPublic },
+      { new: true }
+    );
+    if (!group) return res.status(404).json({ message: "Ladder group not found" });
+
+    res.json({ message: "Visibility updated", isPublic: group.isPublic });
+  } catch (error) {
+    console.error("Visibility update error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ---------- PUBLIC routes ----------
+
+// @route   GET /api/ladder/public/groups
+// @desc    Public listing of active ladder groups for Home page
+// @access  Public
+router.get("/public/groups", async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 12, 50);
+    const status = req.query.status || "active";
+
+    const filter = status === "all" ? { isPublic: true } : { status, isPublic: true };
+    const groups = await LadderGroup.find(filter)
+      .populate({
+        path: "polls",
+        select: "marketId ladderLabel ladderThreshold ladderOperator options totalVolume isResolved winningOption",
+      })
+      .sort({ createdAt: -1 })
+      .limit(limit);
+
+    const result = groups.map((g) => ({
+      _id: g._id,
+      groupId: g.groupId,
+      title: g.title,
+      resolutionSource: g.resolutionSource,
+      image: g.image || null,
+      closeTime: g.closeTime,
+      status: g.status,
+      finalValue: g.finalValue,
+      rungs: (g.polls || []).map((poll) => {
+        const yesOption = Array.isArray(poll.options) ? poll.options[0] : null;
+        return {
+          marketId: poll.marketId,
+          label: poll.ladderLabel,
+          threshold: poll.ladderThreshold,
+          operator: poll.ladderOperator,
+          probability: yesOption?.percentage ?? 50,
+          volume: poll.totalVolume,
+          isResolved: poll.isResolved,
+          outcome: poll.isResolved ? (poll.winningOption === 0 ? "YES" : "NO") : null,
+        };
+      }),
+    }));
+
+    res.json({ groups: result });
+  } catch (error) {
+    console.error("Public ladder groups list error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 // @route   GET /api/ladder/groups/:groupId
 // @desc    Public view of a ladder group with all rungs, probabilities, and volumes
@@ -290,15 +380,15 @@ router.get("/groups/:groupId", async (req, res) => {
       return {
         pollId: poll._id,
         marketId: poll.marketId,
-        ladderLabel: poll.ladderLabel,
-        ladderThreshold: poll.ladderThreshold,
-        ladderOperator: poll.ladderOperator,
-        yesProbability: yesOption?.percentage ?? null,
-        noProbability: noOption?.percentage ?? null,
-        totalVolume: poll.totalVolume,
+        label: poll.ladderLabel,
+        threshold: poll.ladderThreshold,
+        operator: poll.ladderOperator,
+        probability: yesOption?.percentage ?? 50,
+        noProbability: noOption?.percentage ?? 50,
+        volume: poll.totalVolume,
         totalTrades: poll.totalTrades,
         isResolved: poll.isResolved,
-        winningOption: poll.winningOption,
+        outcome: poll.isResolved ? (poll.winningOption === 0 ? "YES" : "NO") : null,
         endDate: poll.endDate,
       };
     });
@@ -307,14 +397,140 @@ router.get("/groups/:groupId", async (req, res) => {
       groupId: group.groupId,
       title: group.title,
       resolutionSource: group.resolutionSource,
+      image: group.image || null,
       closeTime: group.closeTime,
       status: group.status,
       finalValue: group.finalValue,
       resolvedAt: group.resolvedAt,
+      commentPollId: group.commentPollRef ? String(group.commentPollRef) : null,
       rungs,
     });
   } catch (error) {
     console.error("Get ladder group (public) error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// @route   GET /api/ladder/groups/:groupId/holders
+// @desc    Top YES/NO holders aggregated across all rungs in a group
+// @access  Public
+router.get("/groups/:groupId/holders", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+
+    const group = await LadderGroup.findOne({ groupId: Number(groupId) });
+    if (!group) return res.status(404).json({ message: "Ladder group not found" });
+
+    const polls = await Poll.find({ ladderGroupId: Number(groupId) }).select("_id");
+    if (!polls.length) return res.json({ holders: [] });
+
+    const pollIds = polls.map((p) => p._id);
+
+    const holders = await Trade.aggregate([
+      { $match: { poll: { $in: pollIds }, status: "completed" } },
+      {
+        $group: {
+          _id: { user: "$user", optionIndex: "$optionIndex" },
+          netShares: {
+            $sum: {
+              $cond: [{ $eq: ["$type", "buy"] }, "$amount", { $multiply: ["$amount", -1] }],
+            },
+          },
+        },
+      },
+      { $match: { netShares: { $gt: 0 } } },
+      { $sort: { netShares: -1 } },
+      { $limit: 20 },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id.user",
+          foreignField: "_id",
+          as: "userInfo",
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          optionIndex: "$_id.optionIndex",
+          netShares: 1,
+          username: { $arrayElemAt: ["$userInfo.username", 0] },
+          avatar: { $arrayElemAt: ["$userInfo.avatar", 0] },
+          walletAddress: { $arrayElemAt: ["$userInfo.walletAddress", 0] },
+        },
+      },
+    ]);
+
+    res.json({ holders });
+  } catch (error) {
+    console.error("Ladder holders error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// @route   GET /api/ladder/groups/:groupId/trades
+// @desc    Trade history for all rungs in a group (for probability chart + transactions tab)
+// @access  Public
+router.get("/groups/:groupId/trades", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+
+    const group = await LadderGroup.findOne({ groupId: Number(groupId) });
+    if (!group) return res.status(404).json({ message: "Ladder group not found" });
+
+    const polls = await Poll.find({ ladderGroupId: Number(groupId) })
+      .select("_id marketId ladderLabel ladderThreshold");
+
+    if (!polls.length) return res.json({ trades: [] });
+
+    const pollIds = polls.map((p) => p._id);
+
+    const trades = await Trade.find({
+      poll: { $in: pollIds },
+      status: "completed",
+    })
+      .select("poll type optionIndex amount price createdAt")
+      .sort({ createdAt: 1 })
+      .limit(500);
+
+    // Map poll ObjectId → rung metadata
+    const pollMap = {};
+    polls.forEach((p) => {
+      pollMap[String(p._id)] = {
+        marketId: p.marketId,
+        label: p.ladderLabel,
+        threshold: p.ladderThreshold,
+      };
+    });
+
+    const result = trades.map((t) => {
+      const info = pollMap[String(t.poll)] || {};
+      const price = Number(t.price);
+      // YES probability: optionIndex 0 = YES price directly, 1 = NO so invert
+      const yesPct =
+        t.type === "buy"
+          ? t.optionIndex === 0
+            ? Number.isFinite(price) ? Math.round(price * 100) : null
+            : Number.isFinite(price) && price >= 0 && price <= 1
+            ? Math.round((1 - price) * 100)
+            : null
+          : null; // sell trades don't update chart
+      return {
+        marketId: info.marketId,
+        label: info.label,
+        threshold: info.threshold,
+        type: t.type,
+        optionIndex: t.optionIndex,
+        amount: t.amount,
+        price: Number.isFinite(price) ? price : null,
+        yesPct,
+        createdAt: t.createdAt,
+      };
+    });
+
+    res.json({ trades: result });
+  } catch (error) {
+    console.error("Ladder group trades error:", error);
     res.status(500).json({ message: "Server error" });
   }
 });

@@ -236,7 +236,6 @@ export async function createLadderGroup(groupId, title, source, closeTime) {
   const ct = Math.floor(Number(closeTime));
 
   if (!Number.isFinite(g) || g <= 0) throw new Error("Invalid groupId");
-  if (!title || typeof title !== "string") throw new Error("Title is required");
   if (!Number.isFinite(ct) || ct < 0) throw new Error("Invalid closeTime");
 
   return ladderContractCall({
@@ -311,3 +310,4 @@ export async function resolveRung(marketId) {
     functionArgs: [uintCV(m)],
   });
 }
+
