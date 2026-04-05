@@ -23,10 +23,18 @@ const formatVolume = (ustx) => {
   return kFormat(stx) + " STX";
 };
 
+const parseDate = (ts) => {
+  if (!ts) return null;
+  // Accept Unix seconds (number), ISO string, or Date
+  const n = Number(ts);
+  if (Number.isFinite(n) && n < 1e12) return new Date(n * 1000); // Unix seconds
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
 const timeRemaining = (ts) => {
-  if (!ts) return "—";
-  const end = new Date(Number(ts) * 1000);
-  if (Number.isNaN(end.getTime())) return "—";
+  const end = parseDate(ts);
+  if (!end) return "—";
   const diff = end - Date.now();
   if (diff <= 0) return "Ended";
   const d = Math.floor(diff / 86400000);
@@ -75,9 +83,14 @@ const LadderGroupCard = ({ group }) => {
       <div className="bg-white dark:bg-[#0b1220] border border-gray-200 dark:border-[#1f2937] rounded-2xl p-4 hover:border-sky-400 dark:hover:border-sky-500 hover:shadow-md transition-all duration-150">
         {/* Title row */}
         <div className="flex items-start justify-between gap-2 mb-3">
-          <h3 className="font-semibold text-gray-900 dark:text-white text-sm leading-snug line-clamp-2 group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">
-            {group.title || "Ladder Market"}
-          </h3>
+          <div className="flex items-start gap-2 min-w-0">
+            {group.image && (
+              <img src={group.image} alt="" className="w-8 h-8 rounded-md object-cover shrink-0 mt-0.5" />
+            )}
+            <h3 className="font-semibold text-gray-900 dark:text-white text-sm leading-snug line-clamp-2 group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">
+              {group.title || "Ladder Market"}
+            </h3>
+          </div>
           {isResolved && (
             <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
               Resolved

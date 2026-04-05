@@ -254,7 +254,7 @@ const pollSchema = new mongoose.Schema(
     // Ladder / scalar market fields
     marketType: {
       type: String,
-      enum: ["binary", "ladder"],
+      enum: ["binary", "ladder", "ladder-comment"],
       default: "binary",
     },
     ladderGroupId: {

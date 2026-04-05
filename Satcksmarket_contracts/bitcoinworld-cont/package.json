@@ -16,6 +16,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@stacks/wallet-sdk": "^7.2.0",
     "chokidar-cli": "^3.0.0",
     "cross-fetch": "^4.1.0"
   },

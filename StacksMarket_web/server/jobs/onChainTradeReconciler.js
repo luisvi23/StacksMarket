@@ -3,6 +3,7 @@ const Trade = require("../models/Trade");
 const Poll = require("../models/Poll");
 const User = require("../models/User");
 const { syncPollOddsFromOnChainSnapshot } = require("../utils/onChainOddsSync");
+const { repairTradePricesForPoll } = require("./onChainTransactionIndexer");
 
 const CHAIN_SYNC = {
   TX_SUBMITTED: "tx_submitted",
@@ -157,6 +158,8 @@ async function finalizeSuccessIfPending(trade, io, logger = console) {
   );
   await updatePollStatistics(transitioned.poll);
   await trySyncOnChainOdds(transitioned.poll, logger);
+  // Repair price on all completed trades for this poll so the chart has data
+  await repairTradePricesForPoll(transitioned.poll, null, logger);
   await User.findByIdAndUpdate(transitioned.user, { $inc: { totalTrades: 1 } });
   await emitTradeRealtime(io, transitioned);
   return true;

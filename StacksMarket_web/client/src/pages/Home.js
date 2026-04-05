@@ -52,7 +52,7 @@ const Home = () => {
   const { data: ladderData, isLoading: ladderLoading } = useQuery(
     ["home-ladder-groups"],
     async () => {
-      const response = await axios.get(`${BACKEND_URL}/api/ladder/groups?status=active&limit=12`);
+      const response = await axios.get(`${BACKEND_URL}/api/ladder/public/groups?status=all&limit=12`);
       return response.data;
     },
     {

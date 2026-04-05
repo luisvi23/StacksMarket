@@ -694,11 +694,11 @@ const Admin = () => {
   const [ladderFinalValue, setLadderFinalValue] = useState("");
 
   const emptyLadderForm = {
-    groupId: "",
     title: "",
-    source: "",
+    description: "",
+    image: "",
     closeDate: "",
-    rungs: [{ marketId: "", threshold: "", operator: "gte", label: "", initialLiquidity: "" }],
+    rungs: [{ threshold: "", operator: "gte", label: "", initialLiquidity: "", initialYesPct: "50" }],
   };
   const [ladderForm, setLadderForm] = useState(emptyLadderForm);
 
@@ -717,7 +717,7 @@ const Admin = () => {
       ...prev,
       rungs: [
         ...prev.rungs,
-        { marketId: "", threshold: "", operator: "gte", label: "", initialLiquidity: "" },
+        { threshold: "", operator: "gte", label: "", initialLiquidity: "", initialYesPct: "50" },
       ],
     }));
   };
@@ -739,8 +739,6 @@ const Admin = () => {
 
   const createLadderMutation = useMutation(
     async () => {
-      const g = Number(ladderForm.groupId);
-      if (!Number.isFinite(g) || g <= 0) throw new Error("Invalid Group ID");
       if (!ladderForm.title.trim()) throw new Error("Title is required");
       if (!ladderForm.closeDate) throw new Error("Close date is required");
 
@@ -749,36 +747,61 @@ const Admin = () => {
 
       if (ladderForm.rungs.length === 0) throw new Error("Add at least one rung");
       for (const [i, r] of ladderForm.rungs.entries()) {
-        const m = Number(r.marketId);
         const t = Number(r.threshold);
-        const liq = Number(r.initialLiquidity) * 1_000_000; // STX -> uSTX
-        if (!Number.isFinite(m) || m <= 0) throw new Error(`Rung ${i + 1}: invalid Market ID`);
+        const liq = stxToUstx(r.initialLiquidity);
+        const pct = Number(r.initialYesPct);
         if (!Number.isFinite(t) || t < 0) throw new Error(`Rung ${i + 1}: invalid threshold`);
-        if (!Number.isFinite(liq) || liq <= 0) throw new Error(`Rung ${i + 1}: invalid initial liquidity`);
+        if (!liq || liq <= 0) throw new Error(`Rung ${i + 1}: invalid initial liquidity`);
         if (!r.label.trim()) throw new Error(`Rung ${i + 1}: label is required`);
+        if (!Number.isFinite(pct) || pct < 1 || pct > 99) throw new Error(`Rung ${i + 1}: YES% must be between 1 and 99`);
       }
 
-      // 1. Create ladder group on-chain
-      const txGroup = await createLadderGroup(g, ladderForm.title.trim(), ladderForm.source.trim(), closeSec);
+      // Auto-generate IDs (same pattern as regular markets: Date.now())
+      // Group ID = timestamp; Market IDs = timestamp+1, timestamp+2, ...
+      const ts = Date.now();
+      const g = ts;
 
-      // 2. Register in backend
+      // 1. Create ladder group on-chain — title/description stored off-chain only (same as regular markets)
+      const txGroup = await createLadderGroup(g, "", "", closeSec);
+
+      // 2. Register in backend (title and description live here, not on-chain)
       await axios.post(`${BACKEND_URL}/api/ladder/groups`, {
         groupId: g,
         title: ladderForm.title.trim(),
-        resolutionSource: ladderForm.source.trim(),
+        resolutionSource: ladderForm.description.trim(),
+        image: ladderForm.image.trim() || null,
         closeTime: closeSec,
         createTxId: txGroup.txId,
       });
 
-      // 3. Add each rung on-chain then register in backend
-      for (const r of ladderForm.rungs) {
-        const m = Number(r.marketId);
+      // Wait for create-ladder-group to confirm before adding rungs —
+      // add-rung checks ladder-group-exists on-chain, so the group must be mined first.
+      toast.loading("Waiting for group confirmation on-chain...", { id: "ladder-confirm" });
+      await pollTx(txGroup.txId);
+      toast.dismiss("ladder-confirm");
+
+      // 3. Add each rung on-chain, wait for confirmation, set bias if not 50, then register in backend
+      for (const [i, r] of ladderForm.rungs.entries()) {
+        const m = ts + i + 1;
         const t = Number(r.threshold);
-        const liq = Math.round(Number(r.initialLiquidity) * 1_000_000);
+        const liq = stxToUstx(r.initialLiquidity);
         const op = (r.operator || "gte").slice(0, 3);
         const lbl = r.label.trim().slice(0, 50);
+        const pct = Math.round(Number(r.initialYesPct));
 
         const txRung = await addRung(g, m, t, op, lbl, liq);
+
+        // Wait for add-rung to confirm before set-market-bias (bias requires market to exist)
+        if (pct !== 50) {
+          toast.loading(`Waiting for rung ${i + 1} confirmation...`, { id: `rung-confirm-${i}` });
+          await pollTx(txRung.txId);
+          toast.dismiss(`rung-confirm-${i}`);
+          try {
+            await setMarketBias(m, pct);
+          } catch (err) {
+            console.warn(`[Admin] setMarketBias failed for rung ${m}:`, err?.message);
+          }
+        }
 
         try {
           await axios.post(`${BACKEND_URL}/api/ladder/groups/${g}/rungs`, {
@@ -847,6 +870,17 @@ const Admin = () => {
         toast.success("Ladder group resolved");
       },
       onError: (err) => toast.error(err?.message || "Failed to resolve ladder group"),
+    }
+  );
+
+  const toggleVisibilityMutation = useMutation(
+    async ({ groupId, isPublic }) => {
+      const res = await axios.patch(`${BACKEND_URL}/api/ladder/groups/${groupId}/visibility`, { isPublic });
+      return res.data;
+    },
+    {
+      onSuccess: () => refetchLadderGroups(),
+      onError: (err) => toast.error(err?.response?.data?.message || "Failed to update visibility"),
     }
   );
 
@@ -1195,13 +1229,14 @@ const Admin = () => {
                   <th className="py-2 pr-4">Titulo</th>
                   <th className="py-2 pr-4">Estado</th>
                   <th className="py-2 pr-4">Rungs</th>
+                  <th className="py-2 pr-4">Público</th>
                   <th className="py-2 pr-4">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {ladderGroups.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-6 text-gray-400 dark:text-gray-500">
+                    <td colSpan={6} className="py-6 text-gray-400 dark:text-gray-500">
                       No hay grupos escalera registrados.
                     </td>
                   </tr>
@@ -1229,7 +1264,28 @@ const Admin = () => {
                         </span>
                       </td>
                       <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">
-                        {(g.rungs || []).length}
+                        {(g.polls || []).length}
+                      </td>
+                      <td className="py-2 pr-4">
+                        <button
+                          onClick={() =>
+                            toggleVisibilityMutation.mutate({
+                              groupId: g.groupId,
+                              isPublic: !g.isPublic,
+                            })
+                          }
+                          disabled={toggleVisibilityMutation.isLoading}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                            g.isPublic ? "bg-emerald-500" : "bg-gray-300 dark:bg-gray-600"
+                          }`}
+                          title={g.isPublic ? "Visible en sitio público — click para ocultar" : "Oculto — click para publicar"}
+                        >
+                          <span
+                            className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transform transition-transform ${
+                              g.isPublic ? "translate-x-4" : "translate-x-0.5"
+                            }`}
+                          />
+                        </button>
                       </td>
                       <td className="py-2 pr-4">
                         {String(g.status || "").toLowerCase() !== "resolved" && (
@@ -1300,20 +1356,6 @@ const Admin = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div>
                     <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
-                      Group ID (uint)
-                    </label>
-                    <input
-                      className="input w-full"
-                      type="number"
-                      min="1"
-                      value={ladderForm.groupId}
-                      onChange={(e) => setLadderForm({ ...ladderForm, groupId: e.target.value })}
-                      placeholder="e.g. 1001"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
                       Fecha de cierre
                     </label>
                     <input
@@ -1338,14 +1380,56 @@ const Admin = () => {
 
                   <div className="md:col-span-2">
                     <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
-                      Fuente de resolucion
+                      Descripción / Fuente de resolución
                     </label>
                     <input
                       className="input w-full"
-                      value={ladderForm.source}
-                      onChange={(e) => setLadderForm({ ...ladderForm, source: e.target.value })}
-                      placeholder="e.g. CoinGecko BTC/USD price at close"
+                      value={ladderForm.description}
+                      onChange={(e) => setLadderForm({ ...ladderForm, description: e.target.value })}
+                      placeholder="e.g. CoinGecko BTC/USD price at close 2026-04-30"
                     />
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
+                      Imagen
+                    </label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        className="input flex-1"
+                        value={ladderForm.image}
+                        onChange={(e) => setLadderForm({ ...ladderForm, image: e.target.value })}
+                        placeholder="URL or upload"
+                      />
+                      <label className="btn-outline btn-sm cursor-pointer">
+                        {uploadingField === "ladderImage" ? "..." : "Upload"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files[0];
+                            if (!file) return;
+                            setUploadingField("ladderImage");
+                            try {
+                              const data = new FormData();
+                              data.append("image", file);
+                              const res = await axios.post(`${BACKEND_URL}/api/uploads/image`, data, {
+                                headers: { "Content-Type": "multipart/form-data" },
+                              });
+                              setLadderForm((prev) => ({ ...prev, image: res.data.url }));
+                            } catch (err) {
+                              toast.error(err?.response?.data?.message || "Upload failed");
+                            } finally {
+                              setUploadingField(null);
+                            }
+                          }}
+                        />
+                      </label>
+                      {ladderForm.image && (
+                        <img src={ladderForm.image} alt="preview" className="w-10 h-10 rounded object-cover" />
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1368,26 +1452,13 @@ const Admin = () => {
                       >
                         <div>
                           <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-                            Market ID
-                          </label>
-                          <input
-                            className="input w-full text-sm"
-                            type="number"
-                            min="1"
-                            placeholder="uint"
-                            value={rung.marketId}
-                            onChange={(e) => updateLadderRung(i, "marketId", e.target.value)}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
                             Threshold
                           </label>
                           <input
                             className="input w-full text-sm"
                             type="number"
                             min="0"
-                            placeholder="e.g. 110000"
+                            placeholder="e.g. 80000"
                             value={rung.threshold}
                             onChange={(e) => updateLadderRung(i, "threshold", e.target.value)}
                           />
@@ -1403,7 +1474,6 @@ const Admin = () => {
                           >
                             <option value="gte">&gt;= (gte)</option>
                             <option value="lte">&lt;= (lte)</option>
-                            <option value="eq">= (eq)</option>
                           </select>
                         </div>
                         <div>
@@ -1412,23 +1482,37 @@ const Admin = () => {
                           </label>
                           <input
                             className="input w-full text-sm"
-                            placeholder="e.g. $110k"
+                            placeholder="e.g. $80k"
                             value={rung.label}
                             onChange={(e) => updateLadderRung(i, "label", e.target.value)}
                           />
                         </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                            Liquidez (STX)
+                          </label>
+                          <input
+                            className="input w-full text-sm"
+                            type="number"
+                            min="0"
+                            placeholder="STX"
+                            value={rung.initialLiquidity}
+                            onChange={(e) => updateLadderRung(i, "initialLiquidity", e.target.value)}
+                          />
+                        </div>
                         <div className="flex flex-col">
                           <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-                            Liquidez inicial (STX)
+                            % YES inicial
                           </label>
                           <div className="flex gap-1">
                             <input
                               className="input flex-1 text-sm"
                               type="number"
-                              min="0"
-                              placeholder="STX"
-                              value={rung.initialLiquidity}
-                              onChange={(e) => updateLadderRung(i, "initialLiquidity", e.target.value)}
+                              min="1"
+                              max="99"
+                              placeholder="50"
+                              value={rung.initialYesPct}
+                              onChange={(e) => updateLadderRung(i, "initialYesPct", e.target.value)}
                             />
                             {ladderForm.rungs.length > 1 && (
                               <button

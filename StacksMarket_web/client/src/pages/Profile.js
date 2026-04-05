@@ -228,7 +228,9 @@ const Profile = () => {
                         {getTradeOptionLabel(t)}
                       </td>
                       <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{t.amount}</td>
-                      <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{t.price}</td>
+                      <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">
+                        {t.price != null ? `${(Number(t.price) * 100).toFixed(1)}%` : "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
