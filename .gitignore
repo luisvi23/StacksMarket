@@ -47,6 +47,8 @@ Satcksmarket_contracts/Users
 # ══════════════════════════════════════════════════════════════════════════════
 
 **/.claude/
+**/CLAUDE.md
+CLAUDE.md
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VS CODE — configuración de workspace (puede incluir rutas locales o secrets)
