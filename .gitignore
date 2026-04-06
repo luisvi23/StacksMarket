@@ -19,7 +19,8 @@ keystore/
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Ficheros de configuración Clarinet con mnemonics reales (Mainnet/Testnet/Devnet)
-Satcksmarket_contracts/bitcoinworld-cont/settings/
+Satcksmarket_contracts/stacksmarket-cont/settings/
+Satcksmarket_contracts/bitcoinworld-cont/
 
 # Cache de devnets locales (estado de red, logs, datos efímeros)
 **/.cache/
