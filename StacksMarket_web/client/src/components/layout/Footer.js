@@ -41,7 +41,7 @@ const Footer = () => {
               <FaBookOpen size={20} />
             </a>
             <a
-              href="https://github.com/bitcoinworldapp/bitcoin-world-app"
+              href="https://github.com/luisvi23/STACKS_MARKET_UNIFIED"
               target="_blank"
               rel="noreferrer"
               className="text-gray-400 hover:text-primary-300 transition-colors"

@@ -48,7 +48,7 @@ cp .env.example .env
 
 ### 1) Crear bucket de backups en S3
 
-- Nombre sugerido: `bitcoinworld-backups-prod`
+- Nombre sugerido: `stacksmarket-backups-prod`
 - Región: la misma donde operes AWS (`us-east-1` si no tienes preferencia)
 - Activar desde el inicio:
   - `Versioning`
@@ -68,7 +68,7 @@ CLI ejemplo:
 
 ```bash
 aws s3api put-bucket-lifecycle-configuration \
-  --bucket bitcoinworld-backups-prod \
+  --bucket stacksmarket-backups-prod \
   --lifecycle-configuration file://infra/aws/s3-lifecycle-rule-example.json
 ```
 
@@ -91,7 +91,7 @@ En `CloudTrail`:
 - Crear o usar un trail
 - Habilitar `Data events`
 - Tipo: `S3`
-- Scope: solo el bucket `bitcoinworld-backups-prod`
+- Scope: solo el bucket `stacksmarket-backups-prod`
 
 Esto registra `PutObject`, `GetObject`, `DeleteObject`, etc. a nivel de objeto.
 
@@ -100,15 +100,15 @@ Esto registra `PutObject`, `GetObject`, `DeleteObject`, etc. a nivel de objeto.
 Editar `ops/backup-service/.env`:
 
 ```env
-APP_NAME=bitcoinworld
+APP_NAME=stacksmarket
 BACKUP_ENV=prod
 AWS_REGION=us-east-1
-S3_BUCKET=bitcoinworld-backups-prod
+S3_BUCKET=stacksmarket-backups-prod
 S3_PREFIX=mongodb
 S3_STORAGE_CLASS=STANDARD
 
 MONGODB_URI=...
-MONGODB_DATABASE=bitcoinworld
+MONGODB_DATABASE=stacksmarket
 
 LOCAL_TMP_DIR=./tmp
 KEEP_LOCAL_ARCHIVE=false
@@ -188,7 +188,7 @@ Puedes cambiar la frecuencia más adelante sin tocar código (solo `crontab`).
 ## Restaurar un backup específico
 
 ```bash
-npm run restore -- mongodb/prod/bitcoinworld/2026/02/24/bitcoinworld-prod-bitcoinworld-20260224T020000Z.archive.gz
+npm run restore -- mongodb/prod/stacksmarket/2026/02/24/stacksmarket-prod-stacksmarket-20260224T020000Z.archive.gz
 ```
 
 ## Qué se puede configurar más adelante sin rehacer nada

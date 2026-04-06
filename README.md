@@ -30,7 +30,7 @@ On-chain prediction market platform built on the [Stacks](https://stacks.co) blo
 ```
 STACKS_MARKET_UNIFIED/
 ├── Satcksmarket_contracts/
-│   └── bitcoinworld-cont/          # Clarity smart contracts + tests
+│   └── stacksmarket-cont/          # Clarity smart contracts + tests
 │       ├── contracts/              # All contract versions (v6 → v21)
 │       ├── tests/                  # Vitest + Clarinet SDK (simnet)
 │       ├── deployments/            # Clarinet deployment plans per network
@@ -510,7 +510,7 @@ Singleton document. Stores:
 | `ONCHAIN_INDEXER_CONTRACT_ADDRESS` | — | Override indexer contract address | |
 | `ONCHAIN_INDEXER_CONTRACT_NAME` | — | Override indexer contract name | |
 | `HIRO_API_KEY` | — | Hiro API key (improves rate limits) | |
-| `S3_IMAGES_BUCKET` | — | S3 bucket for image uploads | `bitcoinworld-images` |
+| `S3_IMAGES_BUCKET` | — | S3 bucket for image uploads | `stacksmarket-images` |
 | `S3_IMAGES_REGION` | — | AWS region | `eu-west-1` |
 | `TRADE_RECONCILER_ENABLED` | — | Enable reconciler job | `true` |
 | `TRADE_RECONCILER_INTERVAL_MS` | — | Reconciler poll interval | `120000` |
@@ -585,7 +585,7 @@ npm run odds:backfill       # sync on-chain odds for all markets
 Tests run on **embedded simnet** — no external Stacks node required.
 
 ```bash
-cd Satcksmarket_contracts/bitcoinworld-cont
+cd Satcksmarket_contracts/stacksmarket-cont
 npm install
 
 # Verify Clarity syntax
@@ -650,7 +650,7 @@ Defined in `StacksMarket_web/server_redeployment.txt`. Requires explicit approva
 
 ### Contract deployment
 
-Via Clarinet deployment plans in `Satcksmarket_contracts/bitcoinworld-cont/deployments/`.
+Via Clarinet deployment plans in `Satcksmarket_contracts/stacksmarket-cont/deployments/`.
 
 ```bash
 # Testnet
@@ -674,7 +674,7 @@ The deployer mnemonic lives in `settings/Mainnet.toml` and `settings/Testnet.tom
 | **AWS ECR** | Docker image registry (`bw-stg-api`) |
 | **AWS S3 + CloudFront** | Frontend hosting (`stacksmarket.app`) with CDN invalidation on deploy |
 | **AWS Secrets Manager** | `MONGODB_URI`, `HIRO_API_KEY` — never in plaintext env vars in prod |
-| **AWS S3 (backups)** | Nightly MongoDB backup (`bitcoinworld-backups`), lifecycle to Glacier |
+| **AWS S3 (backups)** | Nightly MongoDB backup (`stacksmarket-backups`), lifecycle to Glacier |
 
 The backup service (`ops/backup-service/`) runs as a separate container on a cron schedule, dumps MongoDB with `mongodump`, and uploads compressed archives to S3.
 
