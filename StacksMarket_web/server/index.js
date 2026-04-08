@@ -15,6 +15,11 @@ const Poll = require("./models/Poll");
 // Load environment variables
 dotenv.config();
 
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not set. Server cannot start.');
+  process.exit(1);
+}
+
 const app = express();
 const server = http.createServer(app);
 const ALLOWED_ORIGINS = (process.env.CLIENT_URL || "")
@@ -27,6 +32,21 @@ const io = socketIo(server, {
     origin: ALLOWED_ORIGINS.length === 1 ? ALLOWED_ORIGINS[0] : ALLOWED_ORIGINS,
     methods: ["GET", "POST"],
   },
+});
+
+// Socket.io JWT authentication middleware
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token) {
+    return next(new Error('Authentication required'));
+  }
+  const jwt = require('jsonwebtoken');
+  try {
+    socket.user = jwt.verify(token, process.env.JWT_SECRET);
+    next();
+  } catch (err) {
+    next(new Error('Invalid token'));
+  }
 });
 
 const onChainTradeReconciler = createOnChainTradeReconciler({ io });
