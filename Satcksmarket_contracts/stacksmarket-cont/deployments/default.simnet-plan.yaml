@@ -77,4 +77,14 @@ plan:
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: contracts/market-factory-v21-testnet-bias.clar
       clarity-version: 4
+    - transaction-type: emulated-contract-publish
+      contract-name: sip010-ft
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/sip010-ft.clar
+      clarity-version: 4
+    - transaction-type: emulated-contract-publish
+      contract-name: sbtc-v3
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/sbtc-v3.clar
+      clarity-version: 4
     epoch: '3.4'

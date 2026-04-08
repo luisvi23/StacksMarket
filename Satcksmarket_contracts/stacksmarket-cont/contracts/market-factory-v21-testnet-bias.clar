@@ -1484,7 +1484,8 @@
 (define-constant ERR-LADDER-NOT-RESOLVED    (err u802))
 (define-constant ERR-RUNG-NOT-FOUND         (err u803))
 (define-constant ERR-RUNG-BAD-OPERATOR      (err u804))
-(define-constant ERR-RUNG-ALREADY-EXISTS    (err u805))
+(define-constant ERR-RUNG-ALREADY-EXISTS      (err u805))
+(define-constant ERR-LADDER-ALREADY-RESOLVED  (err u806))
 
 ;; --------------------- ladder group state maps ----------------------
 ;; All values keyed by group-id g (uint).
@@ -1605,6 +1606,8 @@
     (try! (only-admin))
     ;; Group must exist
     (asserts! (ladder-group-exists g) ERR-LADDER-NOT-FOUND)
+    ;; Cannot add rungs to an already-resolved group
+    (asserts! (not (get-ladder-resolved g)) ERR-LADDER-ALREADY-RESOLVED)
     ;; Market m must not already be a rung
     (asserts! (not (rung-exists m)) ERR-RUNG-ALREADY-EXISTS)
     ;; Operator must be valid
@@ -1644,9 +1647,9 @@
     ;; Market must be a rung
     (asserts! (rung-exists m) ERR-RUNG-NOT-FOUND)
     (let (
-      (g         (unwrap-panic (get g (map-get? rung-group     { m: m }))))
-      (threshold (unwrap-panic (get v (map-get? rung-threshold { m: m }))))
-      (operator  (unwrap-panic (get op (map-get? rung-operator { m: m }))))
+      (g         (unwrap! (get g  (map-get? rung-group     { m: m })) ERR-RUNG-NOT-FOUND))
+      (threshold (unwrap! (get v  (map-get? rung-threshold { m: m })) ERR-RUNG-NOT-FOUND))
+      (operator  (unwrap! (get op (map-get? rung-operator  { m: m })) ERR-RUNG-NOT-FOUND))
     )
       ;; Group must be resolved first
       (asserts! (get-ladder-resolved g) ERR-LADDER-NOT-RESOLVED)
