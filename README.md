@@ -691,4 +691,4 @@ The backup service (`ops/backup-service/`) runs as a separate container on a cro
 - **The `MarketConfig` indexer cursor** (`lastProcessedBlock`, `lastProcessedTxIndex`) must not be reset without understanding the consequences — doing so would trigger a full re-indexation of all contract transactions.
 - **Image uploads** are admin-only and capped at 2MB. Uploaded to S3, never served from the backend process.
 - **CORS** is restricted to `CLIENT_URL`. The `/api/stacks/call-read` proxy exists specifically to avoid exposing the Hiro API key to the browser.
-- **Sensitive files gitignored:** `settings/Mainnet.toml`, `settings/Testnet.toml`, `.env`, `.env.*`, `*_redeployment.txt`, `deploy_actual.txt`, `taskdef*.json`, `AWS_users.txt`, `**/.claude/`
+- **Sensitive files gitignored:** `settings/Mainnet.toml`, `settings/Testnet.toml`, `.env`, `.env.*`, `*_redeployment.txt`, `deploy_actual.txt`, `taskdef*.json`, `AWS_users.txt`
