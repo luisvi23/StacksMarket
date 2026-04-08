@@ -8,9 +8,10 @@ const http = require("http");
 const socketIo = require("socket.io");
 const { createOnChainTradeReconciler } = require("./jobs/onChainTradeReconciler");
 const { createOnChainTransactionIndexer, repairTradePricesForPoll } = require("./jobs/onChainTransactionIndexer");
-const { syncAllActiveMarkets } = require("./utils/onChainOddsSync");
+const { syncAllActiveMarkets, syncLadderGroup } = require("./utils/onChainOddsSync");
 const { buildActiveMarketFilter } = require("./utils/marketState");
 const Poll = require("./models/Poll");
+const LadderGroup = require("./models/LadderGroup");
 
 // Load environment variables
 dotenv.config();
@@ -51,6 +52,34 @@ io.use((socket, next) => {
 
 const onChainTradeReconciler = createOnChainTradeReconciler({ io });
 const onChainTransactionIndexer = createOnChainTransactionIndexer({ io });
+
+// Ladder group syncer — periodically advances "active"/"resolving" groups to "resolved"
+// and recomputes rung Poll outcomes from on-chain state.
+let _ladderGroupSyncTimer = null;
+function startLadderGroupSyncer() {
+  const INTERVAL_MS = Number(process.env.LADDER_GROUP_SYNC_INTERVAL_MS) || 60_000;
+  _ladderGroupSyncTimer = setInterval(async () => {
+    try {
+      const groups = await LadderGroup.find({ status: { $in: ["active", "resolving"] } }).select("groupId");
+      if (!groups.length) return;
+      for (const group of groups) {
+        await syncLadderGroup(group.groupId, { logger: console }).catch((err) => {
+          console.error(`[ladder-group-sync] error for groupId=${group.groupId}:`, err?.message || err);
+        });
+      }
+    } catch (err) {
+      console.error("[ladder-group-sync] tick error:", err?.message || err);
+    }
+  }, INTERVAL_MS);
+  console.log(`[ladder-group-sync] started (interval=${INTERVAL_MS}ms)`);
+}
+function stopLadderGroupSyncer() {
+  if (_ladderGroupSyncTimer) {
+    clearInterval(_ladderGroupSyncTimer);
+    _ladderGroupSyncTimer = null;
+    console.log("[ladder-group-sync] stopped");
+  }
+}
 
 
 // justo después de crear app()
@@ -101,6 +130,9 @@ mongoose
     const indexerEnabled =
       (process.env.ONCHAIN_INDEXER_ENABLED || "true").toLowerCase() !== "false";
     if (indexerEnabled) onChainTransactionIndexer.start();
+    const ladderSyncEnabled =
+      (process.env.LADDER_GROUP_SYNC_ENABLED || "true").toLowerCase() !== "false";
+    if (ladderSyncEnabled) startLadderGroupSyncer();
 
     // Sync all active market odds AND repair historical trade prices on startup
     (async () => {
@@ -177,8 +209,10 @@ server.listen(PORT, () => {
 process.on("SIGINT", () => {
   onChainTradeReconciler.stop();
   onChainTransactionIndexer.stop();
+  stopLadderGroupSyncer();
 });
 process.on("SIGTERM", () => {
   onChainTradeReconciler.stop();
   onChainTransactionIndexer.stop();
+  stopLadderGroupSyncer();
 });
