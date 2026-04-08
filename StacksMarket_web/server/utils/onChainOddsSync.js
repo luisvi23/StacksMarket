@@ -23,7 +23,7 @@ function getContractConfig() {
   const name =
     process.env.ONCHAIN_INDEXER_CONTRACT_NAME ||
     process.env.CONTRACT_NAME ||
-    "market-factory-v20-bias";
+    "market-factory-v21-testnet-bias";
   return { address, name };
 }
 
@@ -270,6 +270,9 @@ async function syncLadderGroup(groupId, { logger = console, timeoutMs = 8000 } =
       group.status = "resolved";
       group.resolvedAt = group.resolvedAt || new Date();
       changed = true;
+    } else if (!isResolvedOnChain && group.status === "active") {
+      // On-chain may have set resolving but not fully resolved yet — mark resolving
+      // (only upgrade, never downgrade)
     }
 
     if (rawFinalValue != null) {
@@ -285,6 +288,38 @@ async function syncLadderGroup(groupId, { logger = console, timeoutMs = 8000 } =
       logger.log?.(
         `[ladder-sync] groupId=${groupId} updated status=${group.status} finalValue=${group.finalValue}`
       );
+    }
+
+    // If resolved on-chain and we have a finalValue, recompute outcomes for
+    // any ladder-rung Polls that have not yet been marked resolved in MongoDB.
+    if (group.status === "resolved" && group.finalValue != null) {
+      const unresolvedPolls = await Poll.find({
+        ladderGroupId: group.groupId,
+        marketType: "ladder",
+        isResolved: false,
+      });
+
+      if (unresolvedPolls.length > 0) {
+        for (const poll of unresolvedPolls) {
+          const threshold = poll.ladderThreshold;
+          const operator = poll.ladderOperator;
+
+          let outcome = null;
+          if (operator === "gte") outcome = group.finalValue >= threshold;
+          else if (operator === "lte") outcome = group.finalValue <= threshold;
+
+          if (outcome !== null) {
+            poll.isResolved = true;
+            poll.winningOption = outcome ? 0 : 1; // 0 = YES, 1 = NO
+            poll.isActive = false;
+            await poll.save();
+            logger.log?.(
+              `[ladder-sync] rung pollId=${poll._id} marketId=${poll.marketId} ` +
+              `threshold=${threshold} operator=${operator} => ${outcome ? "YES" : "NO"}`
+            );
+          }
+        }
+      }
     }
 
     return { synced: true, changed, groupId: group.groupId, status: group.status, finalValue: group.finalValue };

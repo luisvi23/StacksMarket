@@ -161,62 +161,70 @@ router.post("/groups/:groupId/rungs", adminAuth, async (req, res) => {
 // @desc    Mark a ladder group as resolved and store the final value
 // @access  Private (Admin)
 router.post("/groups/:groupId/resolve", adminAuth, async (req, res) => {
+  const { groupId } = req.params;
+  const { finalValue } = req.body;
+
+  if (finalValue == null) {
+    return res.status(400).json({ message: "finalValue is required" });
+  }
+
+  const numericFinalValue = Number(finalValue);
+  if (!Number.isFinite(numericFinalValue)) {
+    return res.status(400).json({ message: "finalValue must be a finite number" });
+  }
+
+  const session = await mongoose.startSession();
   try {
-    const { groupId } = req.params;
-    const { finalValue } = req.body;
+    let group;
+    let rungResults = [];
 
-    if (finalValue == null) {
-      return res.status(400).json({ message: "finalValue is required" });
-    }
+    await session.withTransaction(async () => {
+      group = await LadderGroup.findOne({ groupId: Number(groupId) })
+        .populate("polls")
+        .session(session);
 
-    const group = await LadderGroup.findOne({ groupId: Number(groupId) }).populate("polls");
-    if (!group) {
-      return res.status(404).json({ message: "Ladder group not found" });
-    }
-
-    if (group.status === "resolved") {
-      return res.status(400).json({ message: "Ladder group is already resolved" });
-    }
-
-    const numericFinalValue = Number(finalValue);
-    if (!Number.isFinite(numericFinalValue)) {
-      return res.status(400).json({ message: "finalValue must be a finite number" });
-    }
-
-    group.finalValue = numericFinalValue;
-    group.status = "resolved";
-    group.resolvedAt = new Date();
-    await group.save();
-
-    // Determine each rung's outcome and update the linked polls
-    const rungResults = [];
-    for (const poll of group.polls) {
-      if (!poll || poll.marketType !== "ladder") continue;
-
-      const outcome = computeRungOutcome(
-        numericFinalValue,
-        poll.ladderThreshold,
-        poll.ladderOperator
-      );
-
-      if (outcome !== null) {
-        poll.isResolved = true;
-        poll.winningOption = outcome ? 0 : 1; // 0 = YES, 1 = NO (binary options)
-        poll.isActive = false;
-        await poll.save();
+      if (!group) {
+        throw Object.assign(new Error("Ladder group not found"), { statusCode: 404 });
+      }
+      if (group.status === "resolved") {
+        throw Object.assign(new Error("Ladder group is already resolved"), { statusCode: 400 });
       }
 
-      rungResults.push({
-        pollId: poll._id,
-        marketId: poll.marketId,
-        ladderLabel: poll.ladderLabel,
-        ladderThreshold: poll.ladderThreshold,
-        ladderOperator: poll.ladderOperator,
-        outcome,
-      });
-    }
+      group.finalValue = numericFinalValue;
+      group.status = "resolved";
+      group.resolvedAt = new Date();
+      await group.save({ session });
 
-    // Emit live updates via socket.io
+      // Determine each rung's outcome and update the linked polls
+      rungResults = [];
+      for (const poll of group.polls) {
+        if (!poll || poll.marketType !== "ladder") continue;
+
+        const outcome = computeRungOutcome(
+          numericFinalValue,
+          poll.ladderThreshold,
+          poll.ladderOperator
+        );
+
+        if (outcome !== null) {
+          poll.isResolved = true;
+          poll.winningOption = outcome ? 0 : 1; // 0 = YES, 1 = NO (binary options)
+          poll.isActive = false;
+          await poll.save({ session });
+        }
+
+        rungResults.push({
+          pollId: poll._id,
+          marketId: poll.marketId,
+          ladderLabel: poll.ladderLabel,
+          ladderThreshold: poll.ladderThreshold,
+          ladderOperator: poll.ladderOperator,
+          outcome,
+        });
+      }
+    });
+
+    // Emit live updates via socket.io (outside transaction — side effects only)
     const io = req.app.get("io");
     if (io) {
       for (const result of rungResults) {
@@ -236,7 +244,11 @@ router.post("/groups/:groupId/resolve", adminAuth, async (req, res) => {
     });
   } catch (error) {
     console.error("Resolve ladder group error:", error);
-    res.status(500).json({ message: "Server error" });
+    const statusCode = error.statusCode || 500;
+    const message = statusCode !== 500 ? error.message : "Server error";
+    res.status(statusCode).json({ message });
+  } finally {
+    session.endSession();
   }
 });
 
