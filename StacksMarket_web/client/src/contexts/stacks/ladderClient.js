@@ -19,7 +19,7 @@ import {
 const NETWORK_NAME = (process.env.REACT_APP_STACKS_NETWORK || "mainnet").toLowerCase();
 const CONTRACT_ADDRESS =
   process.env.REACT_APP_CONTRACT_ADDRESS || "SP3N5CN0PE7YRRP29X7K9XG22BT861BRS5BN8HFFA";
-const CONTRACT_NAME = process.env.REACT_APP_CONTRACT_NAME || "market-factory-v20-bias";
+const CONTRACT_NAME = process.env.REACT_APP_CONTRACT_NAME || "market-factory-v21-testnet-bias";
 
 const APP_DETAILS = {
   name: "StacksMarket",
@@ -165,9 +165,9 @@ export async function getLadderGroupInfo(groupId) {
     groupId: Number(groupId),
     title: parseStringField(getField(data, "title")),
     resolutionSource: parseStringField(getField(data, "source")),
-    closeTime: normalizeUInt(getField(data, "close-time")),
-    status: parseStringField(getField(data, "status")),
-    finalValue: normalizeUInt(getField(data, "final-value")),
+    closeTime: normalizeUInt(getField(data, "closeTime")),
+    resolved: parseBool(getField(data, "resolved")),
+    finalValue: normalizeUInt(getField(data, "finalValue")),
   };
 }
 
@@ -189,12 +189,11 @@ export async function getRungInfo(marketId) {
 
   return {
     marketId: Number(marketId),
-    groupId: normalizeUInt(getField(data, "group-id")),
+    groupId: normalizeUInt(getField(data, "group")),
     threshold: normalizeUInt(getField(data, "threshold")),
     operator: parseStringField(getField(data, "operator")),
     label: parseStringField(getField(data, "label")),
-    isResolved: parseBool(getField(data, "resolved")),
-    outcome: parseStringField(getField(data, "outcome")),
+    isRung: parseBool(getField(data, "isRung")),
   };
 }
 
