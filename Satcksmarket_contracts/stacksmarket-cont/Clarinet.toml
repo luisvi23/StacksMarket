@@ -12,6 +12,16 @@ local   = { url = "http://localhost:20443" }
 testnet = { url = "https://stacks-node-api.testnet.stacks.co" }
 mainnet = { url = "https://stacks-node-api.mainnet.stacks.co" }
 
+[contracts.sip010-ft]
+path           = "contracts/sip010-ft.clar"
+clarity_version = 4
+epoch          = "3.4"
+
+[contracts.sbtc-v3]
+path           = "contracts/sbtc-v3.clar"
+clarity_version = 4
+epoch          = "3.4"
+
 [contracts.market-factory-v20-bias]
 path           = "contracts/market-factory-v20-bias.clar"
 clarity_version = 4
