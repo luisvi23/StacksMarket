@@ -29,6 +29,7 @@ import {
   getUserClaimable,
   ensureWalletSigner,
   getWalletStxBalance,
+  waitForTx,
 } from "../contexts/stacks/marketClient";
 import { useAuth } from "../contexts/AuthContext";
 import { USTX_PER_STX, ustxToStxString, formatStx } from "../utils/stx";
@@ -294,30 +295,59 @@ const TradePanel = ({ selectedRung, selectedSide, onSideChange, user, onTradeSuc
   const handleTrade = async () => {
     if (!user) { toast.error("Connect your wallet to trade"); return; }
     setTradeLoading(true);
+    let txData;
+    const action = tradeMode === "buy" ? "Buy" : "Sell";
     try {
       await ensureWalletSigner(user.walletAddress);
       if (tradeMode === "buy") {
         const ustx = Math.round(Number(budget) * USTX_PER_STX);
         if (!Number.isFinite(ustx) || ustx <= 0) throw new Error("Enter a valid STX amount");
         const fn = selectedSide === "YES" ? buyYesBySatsAuto : buyNoBySatsAuto;
-        await fn(Number(selectedRung.marketId), ustx);
-        toast.success(`Buy ${selectedSide} submitted!`);
+        txData = await fn(Number(selectedRung.marketId), ustx);
         setBudget("");
       } else {
         const amt = Math.round(Number(sellShares));
         if (!Number.isFinite(amt) || amt <= 0) throw new Error("Enter number of shares");
         if (amt > maxSellShares) throw new Error(`Max sell: ${maxSellShares} shares`);
         const fn = selectedSide === "YES" ? sellYesAuto : sellNoAuto;
-        await fn(Number(selectedRung.marketId), amt);
-        toast.success(`Sell ${selectedSide} submitted!`);
+        txData = await fn(Number(selectedRung.marketId), amt);
         setSellShares("");
       }
       setQuote(null);
-      onTradeSuccess?.();
     } catch (err) {
       if (err?.message !== "User cancelled") toast.error(err?.message || "Trade failed");
-    } finally {
       setTradeLoading(false);
+      return;
+    }
+
+    // Wallet confirmed broadcast — unblock UI immediately
+    setTradeLoading(false);
+
+    const txId = txData?.txId;
+    if (!txId) {
+      // Fallback: no txId returned (shouldn't happen)
+      toast.success(`${action} ${selectedSide} submitted!`);
+      onTradeSuccess?.();
+      return;
+    }
+
+    // Show persistent loading toast while waiting for blockchain confirmation
+    const pendingToastId = toast.loading(`Transaction sent — waiting for confirmation...`);
+
+    try {
+      await waitForTx(txId);
+      toast.dismiss(pendingToastId);
+      toast.success(`${action} ${selectedSide} confirmed!`);
+      onTradeSuccess?.();
+    } catch (err) {
+      toast.dismiss(pendingToastId);
+      if (err?.message?.includes("not confirmed after")) {
+        toast.error("Transaction is taking longer than expected. Check your wallet.");
+      } else {
+        toast.error(err?.message || "Transaction failed");
+      }
+      // Refresh data anyway — tx may still have gone through
+      onTradeSuccess?.();
     }
   };
 
@@ -1145,6 +1175,7 @@ const LadderGroupDetail = () => {
             onTradeSuccess={() => {
               queryClient.invalidateQueries(["ladder-group", groupId]);
               queryClient.invalidateQueries(["ladder-group-trades", groupId]);
+              queryClient.invalidateQueries(["ladder-group-holders", groupId]);
             }}
           />
 
