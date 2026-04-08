@@ -98,7 +98,7 @@ router.get("/groups", adminAuth, async (req, res) => {
 router.post("/groups/:groupId/rungs", adminAuth, async (req, res) => {
   try {
     const { groupId } = req.params;
-    const { marketId, threshold, operator, label, initialLiquidity, addTxId } = req.body;
+    const { marketId, threshold, operator, label, initialLiquidity, addTxId, initialYesPct } = req.body;
 
     if (marketId == null || threshold == null || !operator) {
       return res.status(400).json({
@@ -127,10 +127,13 @@ router.post("/groups/:groupId/rungs", adminAuth, async (req, res) => {
       category: "Crypto",
       subCategory: "All",
       createdBy: req.user._id,
-      options: [
-        { text: "Yes", percentage: 50 },
-        { text: "No", percentage: 50 },
-      ],
+      options: (() => {
+        const yesPct = Number.isFinite(Number(initialYesPct)) ? Math.min(99, Math.max(1, Math.round(Number(initialYesPct)))) : 50;
+        return [
+          { text: "Yes", percentage: yesPct },
+          { text: "No", percentage: 100 - yesPct },
+        ];
+      })(),
       endDate: group.closeTime || null,
       creationStatus: addTxId ? "pending" : "confirmed",
       createTxId: addTxId || null,
