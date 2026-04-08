@@ -19,19 +19,19 @@ const okOr = (r: any, allow: number[], tag: string) => {
 // set-fees tolerante a (706: no autorizado/estado) y (743: locked)
 export const trySetFees = (bpsPlatform: number, bpsTeam: number, sender: any) => {
   try {
-    const r = simnet.callPublicFn("market-factory", "set-fees", [Cl.uint(bpsPlatform), Cl.uint(bpsTeam)], sender);
+    const r = simnet.callPublicFn("market-factory-v21-testnet-bias", "set-fees", [Cl.uint(bpsPlatform), Cl.uint(bpsTeam)], sender);
     okOr(r, [706, 743], "set-fees");
   } catch (e) {
     console.log("[set-fees] SKIP: factory no disponible en este runner");
   }
 };
 
-export const trySetRecipients = (drip: string, brc: string, team: string, lp: string, sender: any) => {
+export const trySetRecipients = (walletA: string, walletB: string, lp: string, sender: any) => {
   try {
     const r = simnet.callPublicFn(
-      "market-factory",
+      "market-factory-v21-testnet-bias",
       "set-fee-recipients",
-      [Cl.principal(drip), Cl.principal(brc), Cl.principal(team), Cl.principal(lp)],
+      [Cl.principal(walletA), Cl.principal(walletB), Cl.principal(lp)],
       sender
     );
     okOr(r, [706, 743], "set-fee-recipients");

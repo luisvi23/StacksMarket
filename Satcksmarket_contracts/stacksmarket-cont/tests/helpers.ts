@@ -120,9 +120,8 @@ export function unwrapQuote(res: any) {
     cost:        pick("cost"),
     feeProtocol: pick("feeProtocol"),
     feeLP:       pick("feeLP"),
-    drip:        pick("drip"),
-    brc20:       pick("brc20"),
-    team:        pick("team"),
+    walletA:     pick("walletA"),
+    walletB:     pick("walletB"),
     total:       pick("total"),
   };
 }
@@ -130,7 +129,7 @@ export function quoteTotal(res: any): number {
   return unwrapQuote(res).total;
 }
 export function logQuote(side: "YES" | "NO", amount: number, q: ReturnType<typeof unwrapQuote>) {
-  log(`💬 Quote ${side} Δ=${amount}: cost=${q.cost}, feeProtocol=${q.feeProtocol} (drip=${q.drip}, brc20=${q.brc20}, team=${q.team}), feeLP=${q.feeLP}, TOTAL=${q.total}`);
+  log(`💬 Quote ${side} Δ=${amount}: cost=${q.cost}, feeProtocol=${q.feeProtocol} (walletA=${q.walletA}, walletB=${q.walletB}), feeLP=${q.feeLP}, TOTAL=${q.total}`);
 }
 
 // ---------- Azúcar para llamadas ----------
@@ -155,7 +154,7 @@ export function view(contract: string, fn: string, args: any[] = [], caller: str
 }
 
 // ---------- Estado & Balances ----------
-export const MARKET = "market-factory-v5-2";
+export const MARKET = "market-factory-v21-testnet-bias";
 export const SBTC   = "sbtc-v3";
 
 // helpers.ts

@@ -34,9 +34,9 @@ function ensureSolvent(m: number, winner: "YES" | "NO", admin: string, sender: s
   const need = BigInt(winner === "YES" ? ys : ns) * BigInt(UNIT);
 
   if (BigInt(pool) < need) {
+    // add-liquidity does not exist in v21; pool is seeded via create-market
     const shortfall = Number(need - BigInt(pool));
-    callOk(SBTC, "mint",           [toU(shortfall), Cl.principal(admin)], sender);
-    callOk(MARKET, "add-liquidity",[toU(m), toU(shortfall)],              admin);
+    log(`⚠️  ensureSolvent: pool shortfall=${shortfall} but add-liquidity not available in v21`);
   }
 }
 
@@ -48,7 +48,7 @@ describe("Market settlement (pool math, fees routing, resolve & redeem 1:1)", ()
     const d  = addr("deployer");
     const w1 = addr("wallet_1");
     const w2 = addr("wallet_2");
-    const SELF = `${d}.market-factory-v5-2`;
+    const SELF = `${d}.market-factory-v21-testnet-bias`;
     const M = 30;
     const SEED = 80_000;
 
