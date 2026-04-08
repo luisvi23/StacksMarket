@@ -811,6 +811,7 @@ const Admin = () => {
             label: lbl,
             initialLiquidity: liq,
             addTxId: txRung.txId,
+            initialYesPct: pct,
           });
         } catch (err) {
           console.warn(`[Admin] Failed to register rung ${m} in backend:`, err?.message);
