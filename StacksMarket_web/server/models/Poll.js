@@ -356,6 +356,7 @@ pollSchema.index({ isActive: 1, endDate: 1 });
 pollSchema.index({ trending: 1, totalVolume: -1 });
 pollSchema.index({ featured: 1, createdAt: -1 });
 pollSchema.index({ isResolved: 1, marketId: 1 });
+pollSchema.index({ ladderGroupId: 1, marketType: 1 });
 
 // Virtual for time remaining
 pollSchema.virtual("timeRemaining").get(function () {

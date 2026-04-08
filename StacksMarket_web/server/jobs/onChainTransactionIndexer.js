@@ -80,7 +80,7 @@ function getContractId() {
   const name =
     process.env.ONCHAIN_INDEXER_CONTRACT_NAME ||
     process.env.CONTRACT_NAME ||
-    "market-factory-v20-bias";
+    "market-factory-v21-testnet-bias";
   return `${address}.${name}`;
 }
 
