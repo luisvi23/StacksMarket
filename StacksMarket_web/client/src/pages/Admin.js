@@ -112,7 +112,7 @@ const Admin = () => {
 
   const { data: polls, isLoading } = useQuery(["admin-polls", page], async () => {
     return (
-      await axios.get(`${BACKEND_URL}/api/admin/polls?page=${page}&limit=10`)
+      await axios.get(`${BACKEND_URL}/api/admin/polls?page=${page}&limit=10&marketType=binary`)
     ).data;
   });
 

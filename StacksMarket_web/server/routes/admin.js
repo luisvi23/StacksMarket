@@ -195,7 +195,7 @@ router.get("/polls", adminAuth, async (req, res) => {
   try {
     const { page = 1, limit = 20, status, category } = req.query;
 
-    const query = {};
+    const query = { marketType: "binary" };
     if (status) query.isActive = status === "active";
     if (category) query.category = category;
 
