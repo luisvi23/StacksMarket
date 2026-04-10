@@ -147,10 +147,7 @@ const pollSchema = new mongoose.Schema(
     // Blockchain market id for tracking
     marketId: {
       type: String,
-      unique: true,
-      sparse: true,
-      index: true,
-      default: null,
+      default: undefined,
     },
     creationStatus: {
       type: String,
@@ -356,6 +353,15 @@ pollSchema.index({ isActive: 1, endDate: 1 });
 pollSchema.index({ trending: 1, totalVolume: -1 });
 pollSchema.index({ featured: 1, createdAt: -1 });
 pollSchema.index({ isResolved: 1, marketId: 1 });
+pollSchema.index(
+  { marketId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      marketId: { $type: "string", $ne: "" },
+    },
+  }
+);
 pollSchema.index({ ladderGroupId: 1, marketType: 1 });
 
 // Virtual for time remaining

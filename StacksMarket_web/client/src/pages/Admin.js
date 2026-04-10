@@ -692,6 +692,7 @@ const Admin = () => {
   const [ladderCreating, setLadderCreating] = useState(false);
   const [ladderResolvingGroupId, setLadderResolvingGroupId] = useState(null);
   const [ladderFinalValue, setLadderFinalValue] = useState("");
+  const [reResolvingGroupId, setReResolvingGroupId] = useState(null);
 
   const emptyLadderForm = {
     title: "",
@@ -841,23 +842,32 @@ const Admin = () => {
       // 1. Resolve group on-chain (stores final value)
       const txGroup = await resolveLadderGroup(g, fv);
 
+      // Wait for group resolution to confirm before resolving rungs
+      toast.loading("Waiting for group resolution on-chain...", { id: "ladder-resolve" });
+      await pollTx(txGroup.txId);
+      toast.dismiss("ladder-resolve");
+
       // 2. Notify backend
       await axios.post(`${BACKEND_URL}/api/ladder/groups/${g}/resolve`, {
         finalValue: fv,
         txId: txGroup.txId,
       });
 
-      // 3. Resolve each rung on-chain
+      // 3. Resolve each rung on-chain (must wait for each to confirm)
       const group = ladderGroups.find((gr) => Number(gr.groupId) === g);
       const rungs = group?.rungs || [];
-      for (const r of rungs) {
+      for (const [i, r] of rungs.entries()) {
         try {
           const m = Number(r.marketId);
           if (Number.isFinite(m) && m > 0) {
-            await resolveRung(m);
+            const txRung = await resolveRung(m);
+            toast.loading(`Waiting for rung ${i + 1}/${rungs.length} confirmation...`, { id: `rung-resolve-${i}` });
+            await pollTx(txRung.txId);
+            toast.dismiss(`rung-resolve-${i}`);
           }
         } catch (err) {
           console.warn(`[Admin] resolveRung failed for ${r.marketId}:`, err?.message);
+          toast.error(`Rung ${r.marketId} resolve failed: ${err?.message}`);
         }
       }
 
@@ -1289,9 +1299,9 @@ const Admin = () => {
                         </button>
                       </td>
                       <td className="py-2 pr-4">
-                        {String(g.status || "").toLowerCase() !== "resolved" && (
-                          <div className="flex items-center gap-2">
-                            {ladderResolvingGroupId === g.groupId ? (
+                        <div className="flex items-center gap-2">
+                          {String(g.status || "").toLowerCase() !== "resolved" ? (
+                            ladderResolvingGroupId === g.groupId ? (
                               <>
                                 <input
                                   type="number"
@@ -1330,9 +1340,44 @@ const Admin = () => {
                               >
                                 Resolver
                               </button>
-                            )}
-                          </div>
-                        )}
+                            )
+                          ) : (
+                            <button
+                              disabled={reResolvingGroupId === g.groupId}
+                              onClick={async () => {
+                                const rungs = g.rungs || g.polls || [];
+                                if (!rungs.length) { toast.error("No rungs found"); return; }
+                                setReResolvingGroupId(g.groupId);
+                                try {
+                                  for (const [i, r] of rungs.entries()) {
+                                    const m = Number(r.marketId);
+                                    if (!Number.isFinite(m) || m <= 0) continue;
+                                    try {
+                                      toast.loading(`Resolving rung ${i + 1}/${rungs.length} on-chain...`, { id: `re-rung-${i}` });
+                                      const tx = await resolveRung(m);
+                                      await pollTx(tx.txId);
+                                      toast.dismiss(`re-rung-${i}`);
+                                      toast.success(`Rung ${i + 1} resolved on-chain`);
+                                    } catch (err) {
+                                      toast.dismiss(`re-rung-${i}`);
+                                      if (err?.message?.includes("abort_by_response")) {
+                                        toast.success(`Rung ${i + 1} already resolved on-chain`);
+                                      } else if (err?.message !== "User cancelled") {
+                                        toast.error(`Rung ${i + 1} failed: ${err?.message}`);
+                                      }
+                                    }
+                                  }
+                                  refetchLadderGroups();
+                                } finally {
+                                  setReResolvingGroupId(null);
+                                }
+                              }}
+                              className="btn-outline btn-sm text-amber-500 border-amber-500 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {reResolvingGroupId === g.groupId ? "Resolviendo..." : "Re-resolver rungs"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))

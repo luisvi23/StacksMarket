@@ -1,12 +1,9 @@
 // LadderGroupCard.js — Compact card for listing ladder groups on Home / category pages
-// Props:
-//   group: {
-//     _id, groupId, title, rungs (array), totalVolume, closeTime, status
-//   }
+// Styled to match PollCard appearance
 
 import React from "react";
 import { Link } from "react-router-dom";
-import { FaClock, FaChartBar } from "react-icons/fa";
+import { FaClock, FaChartLine, FaChevronRight } from "react-icons/fa";
 import { USTX_PER_STX } from "../../utils/stx";
 
 // ------------------- Helpers -------------------
@@ -20,16 +17,21 @@ const kFormat = (n) => {
 
 const formatVolume = (ustx) => {
   const stx = Number(ustx || 0) / USTX_PER_STX;
-  return kFormat(stx) + " STX";
+  return kFormat(stx);
 };
 
 const parseDate = (ts) => {
   if (!ts) return null;
-  // Accept Unix seconds (number), ISO string, or Date
   const n = Number(ts);
-  if (Number.isFinite(n) && n < 1e12) return new Date(n * 1000); // Unix seconds
+  if (Number.isFinite(n) && n < 1e12) return new Date(n * 1000);
   const d = new Date(ts);
   return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const formatEndAt = (ts) => {
+  const d = parseDate(ts);
+  if (!d) return "—";
+  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 };
 
 const timeRemaining = (ts) => {
@@ -80,55 +82,71 @@ const LadderGroupCard = ({ group }) => {
       className="block group"
       aria-label={`View ladder market: ${group.title}`}
     >
-      <div className="bg-white dark:bg-[#0b1220] border border-gray-200 dark:border-[#1f2937] rounded-2xl p-4 hover:border-sky-400 dark:hover:border-sky-500 hover:shadow-md transition-all duration-150">
-        {/* Title row */}
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <div className="flex items-start gap-2 min-w-0">
-            {group.image && (
-              <img src={group.image} alt="" className="w-8 h-8 rounded-md object-cover shrink-0 mt-0.5" />
-            )}
-            <h3 className="font-semibold text-gray-900 dark:text-white text-sm leading-snug line-clamp-2 group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">
-              {group.title || "Ladder Market"}
-            </h3>
-          </div>
-          {isResolved && (
-            <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-              Resolved
-            </span>
-          )}
-        </div>
-
-        {/* Top 3 rungs */}
-        {topRungs.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            {topRungs.map((r) => (
-              <ProbPill
-                key={r.marketId ?? r._id}
-                label={r.label || `#${r.threshold}`}
-                pct={r.probability ?? 50}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Footer meta */}
-        <div className="flex items-center justify-between text-xs text-gray-500 dark:text-slate-400 pt-2 border-t border-gray-100 dark:border-gray-700/50">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1">
-              <FaChartBar className="w-3 h-3" />
-              {rungCount} {rungCount === 1 ? "rung" : "rungs"}
-            </span>
-            {group.totalVolume != null && Number(group.totalVolume) > 0 && (
-              <span>{formatVolume(group.totalVolume)}</span>
+      <div className="card-hover p-4 md:p-5 h-full">
+        <div className="flex flex-col h-full">
+          {/* Title row — matches PollCard layout */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0 flex-1">
+              <div className="w-14 h-14 rounded-2xl overflow-hidden bg-gray-200 dark:bg-gray-700 flex-shrink-0">
+                {group.image && (
+                  <img src={group.image} alt="" className="w-full h-full object-cover" />
+                )}
+              </div>
+              <div className="max-h-14 overflow-hidden">
+                <h3 className="text-base md:text-lg font-semibold text-gray-900 dark:text-gray-100 leading-tight line-clamp-2">
+                  {group.title || "Ladder Market"}
+                </h3>
+              </div>
+            </div>
+            {isResolved && (
+              <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                Resolved
+              </span>
             )}
           </div>
 
-          {group.closeTime && (
-            <span className="flex items-center gap-1">
-              <FaClock className="w-3 h-3" />
-              {timeRemaining(group.closeTime)}
-            </span>
+          {/* Meta row — matches PollCard */}
+          <div className="mb-4 mt-3 space-y-1 text-[13px] text-gray-600 dark:text-gray-300 w-full">
+            {group.closeTime && (
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 w-full">
+                <span className="inline-flex items-center gap-2">
+                  <FaClock className="w-3.5 h-3.5 opacity-80" />
+                  Ends at {formatEndAt(group.closeTime)}
+                  <span className="ml-2 text-gray-400 dark:text-gray-500">
+                    ({timeRemaining(group.closeTime)})
+                  </span>
+                </span>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 w-full">
+              <span className="inline-flex items-center gap-2">
+                <FaChartLine className="w-3.5 h-3.5 opacity-80" />
+                Vol. STX {formatVolume(group.totalVolume || 0)}
+              </span>
+              <span className="inline-flex items-center gap-1 text-gray-400 dark:text-gray-500">
+                {rungCount} {rungCount === 1 ? "rung" : "rungs"}
+              </span>
+            </div>
+          </div>
+
+          {/* Top 3 rungs — unique to ladder */}
+          {topRungs.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {topRungs.map((r) => (
+                <ProbPill
+                  key={r.marketId ?? r._id}
+                  label={r.label || `#${r.threshold}`}
+                  pct={r.probability ?? 50}
+                />
+              ))}
+            </div>
           )}
+
+          {/* Footer — matches PollCard */}
+          <div className="mt-auto pt-2 flex items-center justify-end text-[12px] text-gray-400 dark:text-gray-500">
+            <span>See All Options</span>
+            <FaChevronRight className="w-3 h-3 ml-1" />
+          </div>
         </div>
       </div>
     </Link>

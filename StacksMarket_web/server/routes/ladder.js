@@ -1,6 +1,5 @@
 // routes/ladder.js
 const express = require("express");
-const mongoose = require("mongoose");
 const LadderGroup = require("../models/LadderGroup");
 const Poll = require("../models/Poll");
 const Trade = require("../models/Trade");
@@ -36,7 +35,12 @@ router.post("/groups", adminAuth, async (req, res) => {
       });
     }
 
-    const existing = await LadderGroup.findOne({ groupId });
+    const numGroupId = Number(groupId);
+    if (!Number.isFinite(numGroupId) || numGroupId <= 0) {
+      return res.status(400).json({ message: "groupId must be a positive number" });
+    }
+
+    const existing = await LadderGroup.findOne({ groupId: numGroupId });
     if (existing) {
       return res.status(409).json({ message: "Ladder group with that groupId already exists" });
     }
@@ -104,6 +108,23 @@ router.post("/groups/:groupId/rungs", adminAuth, async (req, res) => {
       return res.status(400).json({
         message: "marketId, threshold, and operator are required",
       });
+    }
+
+    const numThreshold = Number(threshold);
+    if (!Number.isFinite(numThreshold) || numThreshold < 0) {
+      return res.status(400).json({ message: "threshold must be a non-negative finite number" });
+    }
+
+    const numMarketId = Number(marketId);
+    if (!Number.isFinite(numMarketId) || numMarketId <= 0) {
+      return res.status(400).json({ message: "marketId must be a positive number" });
+    }
+
+    if (initialYesPct != null) {
+      const pct = Number(initialYesPct);
+      if (!Number.isFinite(pct) || pct < 1 || pct > 99) {
+        return res.status(400).json({ message: "initialYesPct must be between 1 and 99" });
+      }
     }
 
     if (!["gte", "lte"].includes(operator)) {
@@ -176,58 +197,50 @@ router.post("/groups/:groupId/resolve", adminAuth, async (req, res) => {
     return res.status(400).json({ message: "finalValue must be a finite number" });
   }
 
-  const session = await mongoose.startSession();
   try {
-    let group;
-    let rungResults = [];
+    const group = await LadderGroup.findOne({ groupId: Number(groupId) }).populate("polls");
 
-    await session.withTransaction(async () => {
-      group = await LadderGroup.findOne({ groupId: Number(groupId) })
-        .populate("polls")
-        .session(session);
+    if (!group) {
+      return res.status(404).json({ message: "Ladder group not found" });
+    }
+    if (group.status === "resolved") {
+      return res.status(400).json({ message: "Ladder group is already resolved" });
+    }
 
-      if (!group) {
-        throw Object.assign(new Error("Ladder group not found"), { statusCode: 404 });
+    group.finalValue = numericFinalValue;
+    group.status = "resolved";
+    group.resolvedAt = new Date();
+    await group.save();
+
+    // Determine each rung's outcome and update the linked polls
+    const rungResults = [];
+    for (const poll of group.polls) {
+      if (!poll || poll.marketType !== "ladder") continue;
+
+      const outcome = computeRungOutcome(
+        numericFinalValue,
+        poll.ladderThreshold,
+        poll.ladderOperator
+      );
+
+      if (outcome !== null) {
+        poll.isResolved = true;
+        poll.winningOption = outcome ? 0 : 1; // 0 = YES, 1 = NO (binary options)
+        poll.isActive = false;
+        await poll.save();
       }
-      if (group.status === "resolved") {
-        throw Object.assign(new Error("Ladder group is already resolved"), { statusCode: 400 });
-      }
 
-      group.finalValue = numericFinalValue;
-      group.status = "resolved";
-      group.resolvedAt = new Date();
-      await group.save({ session });
+      rungResults.push({
+        pollId: poll._id,
+        marketId: poll.marketId,
+        ladderLabel: poll.ladderLabel,
+        ladderThreshold: poll.ladderThreshold,
+        ladderOperator: poll.ladderOperator,
+        outcome,
+      });
+    }
 
-      // Determine each rung's outcome and update the linked polls
-      rungResults = [];
-      for (const poll of group.polls) {
-        if (!poll || poll.marketType !== "ladder") continue;
-
-        const outcome = computeRungOutcome(
-          numericFinalValue,
-          poll.ladderThreshold,
-          poll.ladderOperator
-        );
-
-        if (outcome !== null) {
-          poll.isResolved = true;
-          poll.winningOption = outcome ? 0 : 1; // 0 = YES, 1 = NO (binary options)
-          poll.isActive = false;
-          await poll.save({ session });
-        }
-
-        rungResults.push({
-          pollId: poll._id,
-          marketId: poll.marketId,
-          ladderLabel: poll.ladderLabel,
-          ladderThreshold: poll.ladderThreshold,
-          ladderOperator: poll.ladderOperator,
-          outcome,
-        });
-      }
-    });
-
-    // Emit live updates via socket.io (outside transaction — side effects only)
+    // Emit live updates via socket.io
     const io = req.app.get("io");
     if (io) {
       for (const result of rungResults) {
@@ -247,11 +260,7 @@ router.post("/groups/:groupId/resolve", adminAuth, async (req, res) => {
     });
   } catch (error) {
     console.error("Resolve ladder group error:", error);
-    const statusCode = error.statusCode || 500;
-    const message = statusCode !== 500 ? error.message : "Server error";
-    res.status(statusCode).json({ message });
-  } finally {
-    session.endSession();
+    res.status(500).json({ message: "Server error" });
   }
 });
 
