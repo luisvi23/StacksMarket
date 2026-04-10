@@ -213,7 +213,15 @@ tradeSchema.index(
     },
   }
 );
-tradeSchema.index({ user: 1, clientOperationId: 1 }, { unique: true, sparse: true });
+tradeSchema.index(
+  { user: 1, clientOperationId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      clientOperationId: { $type: "string", $ne: "" },
+    },
+  }
+);
 tradeSchema.index({ isOnChain: 1, chainSyncStatus: 1, createdAt: -1 });
 tradeSchema.index({ poll: 1, status: 1, createdAt: -1 });
 tradeSchema.index({ poll: 1, priceSource: 1, createdAt: -1 });

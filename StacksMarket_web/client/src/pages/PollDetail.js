@@ -1703,11 +1703,30 @@ export default function PollDetail() {
                     })()}
                     margin={{ top: 10, right: 20, left: 0, bottom: 0 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#37415120" />
-                    <XAxis dataKey="time" tick={{ fill: "#9CA3AF" }} />
-                    <YAxis domain={[0, 100]} tick={{ fill: "#9CA3AF" }} />
-                    <Tooltip />
-                    <Legend />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+                    <XAxis
+                      dataKey="time"
+                      tick={{ fontSize: 11, fill: "#6b7280" }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      tickFormatter={(v) => `${v}%`}
+                      tick={{ fontSize: 11, fill: "#6b7280" }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: "#1f2937",
+                        border: "1px solid #374151",
+                        borderRadius: 8,
+                        fontSize: 12,
+                      }}
+                      formatter={(val) => [`${val}%`]}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
                     {poll.options.map((opt, idx) => (
                       <Line
                         key={idx}
