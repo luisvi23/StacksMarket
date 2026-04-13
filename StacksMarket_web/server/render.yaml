@@ -1,0 +1,43 @@
+# Render.com Blueprint — Dev/Testnet environment
+# Deploy: https://dashboard.render.com/blueprints
+#
+# This file is for the DEV/TESTNET shared environment.
+# Production still deploys to AWS Fargate via server_redeployment.txt — unaffected.
+
+services:
+  - type: web
+    name: stacksmarket-api-dev
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: StacksMarket_web/server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: development
+      - key: PORT
+        value: 10000
+      - key: STACKS_NETWORK
+        value: testnet
+      - key: CONTRACT_ADDRESS
+        value: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
+      - key: CONTRACT_NAME
+        value: market-factory-v21-testnet-bias
+      # Secrets — set via Render dashboard (sync: false means not committed):
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: HIRO_API_KEY
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
