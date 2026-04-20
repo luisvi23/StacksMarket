@@ -46,19 +46,36 @@ const timeRemaining = (ts) => {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 };
 
-const ProbPill = ({ label, pct }) => {
+// Same palette as LadderGroupDetail chart lines
+const RUNG_COLORS = [
+  "#3B82F6", // blue
+  "#F59E0B", // amber
+  "#10B981", // emerald
+  "#EF4444", // red
+  "#8B5CF6", // violet
+  "#EC4899", // pink
+  "#14B8A6", // teal
+  "#F97316", // orange
+];
+
+const ProbPill = ({ label, pct, color }) => {
   const clamped = Math.max(0, Math.min(100, Number(pct || 0)));
-  const bg =
-    clamped >= 66
-      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-      : clamped >= 34
-      ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-      : "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400";
 
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${bg}`}>
+    <span
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+      style={{
+        backgroundColor: `${color}18`,
+        color: color,
+        border: `1px solid ${color}30`,
+      }}
+    >
+      <span
+        className="w-2 h-2 rounded-full shrink-0"
+        style={{ backgroundColor: color }}
+      />
       <span className="truncate max-w-[80px]">{label}</span>
-      <span>{clamped.toFixed(0)}%</span>
+      <span className="opacity-80">{clamped.toFixed(0)}%</span>
     </span>
   );
 };
@@ -68,9 +85,15 @@ const ProbPill = ({ label, pct }) => {
 const LadderGroupCard = ({ group }) => {
   if (!group) return null;
 
-  const topRungs = (group.rungs || [])
+  // Sort all rungs by threshold desc (same order as chart/table in LadderGroupDetail)
+  const allRungsSorted = (group.rungs || [])
+    .slice()
+    .sort((a, b) => Number(b.threshold || 0) - Number(a.threshold || 0));
+
+  // Show top 3 non-resolved rungs, but keep their original index for color mapping
+  const topRungs = allRungsSorted
+    .map((r, idx) => ({ ...r, _colorIdx: idx }))
     .filter((r) => !r.isResolved)
-    .sort((a, b) => Number(b.threshold || 0) - Number(a.threshold || 0))
     .slice(0, 3);
 
   const rungCount = (group.rungs || []).length;
@@ -137,6 +160,7 @@ const LadderGroupCard = ({ group }) => {
                   key={r.marketId ?? r._id}
                   label={r.label || `#${r.threshold}`}
                   pct={r.probability ?? 50}
+                  color={RUNG_COLORS[r._colorIdx % RUNG_COLORS.length]}
                 />
               ))}
             </div>

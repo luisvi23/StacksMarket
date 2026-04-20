@@ -29,6 +29,8 @@ import {
   getUserClaimable,
   getMarketSnapshot,
   redeem as redeemOnChain,
+  withdrawSurplus,
+  getWithdrawableSurplus,
   ensureWalletSigner,
   getWalletStxBalance,
   waitForTx,
@@ -342,6 +344,42 @@ const TradePanel = ({ selectedRung, selectedSide, onSideChange, user, onTradeSuc
       },
     }
   );
+  // Withdraw surplus (admin feature — same function works per-rung since each rung is a market)
+  const [surplusData, setSurplusData] = useState(null);
+
+  useEffect(() => {
+    if (!selectedRung?.isResolved || !selectedRung?.marketId || !user) {
+      setSurplusData(null);
+      return;
+    }
+    let cancelled = false;
+    getWithdrawableSurplus(Number(selectedRung.marketId))
+      .then((data) => { if (!cancelled) setSurplusData(data); })
+      .catch(() => { if (!cancelled) setSurplusData(null); });
+    return () => { cancelled = true; };
+  }, [selectedRung?.marketId, selectedRung?.isResolved, user, refreshKey]);
+
+  const withdrawSurplusMutation = useMutation(
+    async () => {
+      if (!selectedRung?.marketId) throw new Error("Missing marketId");
+      await ensureWalletSigner(user.walletAddress);
+      const tx = await withdrawSurplus(Number(selectedRung.marketId));
+      const txId = tx?.txId || tx?.tx_id || tx?.txid || null;
+      if (!txId) throw new Error("No txId");
+      await waitForTx(txId);
+      return { txId };
+    },
+    {
+      onSuccess: () => {
+        toast.success("Surplus withdrawn!");
+        onTradeSuccess?.();
+      },
+      onError: (err) => {
+        if (err?.message !== "User cancelled") toast.error(err?.message || "Withdraw failed");
+      },
+    }
+  );
+
   const [walletBalanceUstx, setWalletBalanceUstx] = useState(0);
 
   // Fetch wallet STX balance (same as PollDetail)
@@ -574,6 +612,22 @@ const TradePanel = ({ selectedRung, selectedSide, onSideChange, user, onTradeSuc
               <button className="w-full bg-gray-300 dark:bg-gray-700 text-gray-700 dark:text-gray-400 font-semibold py-2 rounded-md cursor-not-allowed text-sm">
                 {!contractData ? "Loading..." : "No claimable payout"}
               </button>
+            )}
+
+            {/* Withdraw surplus — contract admin only (contract rejects non-admin) */}
+            {surplusData && surplusData.withdrawable > 0 && (
+              <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                  Surplus: {formatStx(surplusData.withdrawable)} (Pool: {formatStx(surplusData.pool)} | Reserve: {formatStx(surplusData.reserve)})
+                </div>
+                <button
+                  onClick={() => withdrawSurplusMutation.mutate()}
+                  disabled={withdrawSurplusMutation.isLoading}
+                  className="w-full bg-amber-600 hover:bg-amber-700 text-white font-semibold py-2 rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {withdrawSurplusMutation.isLoading ? "Withdrawing..." : "Withdraw Surplus"}
+                </button>
+              </div>
             )}
           </>
         )}
