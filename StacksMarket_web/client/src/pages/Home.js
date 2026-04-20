@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "react-query";
-import { FaCheckCircle, FaPlayCircle, FaLayerGroup } from "react-icons/fa";
+import { FaCheckCircle, FaPlayCircle } from "react-icons/fa";
 import axios from "../setupAxios";
 import PollCard from "../components/polls/PollCard";
 import LadderGroupCard from "../components/ladder/LadderGroupCard";
@@ -49,28 +49,58 @@ const Home = () => {
     }
   );
 
-  const { data: ladderData, isLoading: ladderLoading } = useQuery(
-    ["home-ladder-groups"],
+  // Fetch ladder groups — split by status for integration into active/closed tabs
+  const { data: ladderActiveData, isLoading: ladderActiveLoading } = useQuery(
+    ["home-ladder-active"],
     async () => {
-      const response = await axios.get(`${BACKEND_URL}/api/ladder/public/groups?status=all&limit=12`);
+      const response = await axios.get(`${BACKEND_URL}/api/ladder/public/groups?status=active&limit=50`);
+      return response.data;
+    },
+    { staleTime: 60 * 1000, refetchOnWindowFocus: false, refetchOnReconnect: false }
+  );
+
+  const { data: ladderResolvedData, isLoading: ladderResolvedLoading } = useQuery(
+    ["home-ladder-resolved"],
+    async () => {
+      const response = await axios.get(`${BACKEND_URL}/api/ladder/public/groups?status=resolved&limit=50`);
       return response.data;
     },
     {
+      enabled: marketTab === "closed",
       staleTime: 60 * 1000,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
     }
   );
 
-  const ladderGroups = ladderData?.groups || [];
+  const activeLadderGroups = ladderActiveData?.groups || [];
+  const resolvedLadderGroups = ladderResolvedData?.groups || [];
 
   const sortByNewest = (list = []) =>
     [...list].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
   const activePolls = sortByNewest(pollsData?.polls || []);
   const closedPolls = sortByNewest(closedPollsData?.polls || []);
-  const visiblePolls = marketTab === "active" ? activePolls : closedPolls;
-  const tabLoading = marketTab === "active" ? pollsLoading : closedPollsLoading;
+
+  // Merge polls + ladder groups into a single unified list, sorted by date
+  const activeItems = useMemo(() => {
+    const polls = activePolls.map((p) => ({ type: "poll", data: p, createdAt: p.createdAt }));
+    const ladders = activeLadderGroups.map((g) => ({ type: "ladder", data: g, createdAt: g.createdAt }));
+    return [...polls, ...ladders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }, [activePolls, activeLadderGroups]);
+
+  const closedItems = useMemo(() => {
+    const polls = closedPolls.map((p) => ({ type: "poll", data: p, createdAt: p.createdAt }));
+    const ladders = resolvedLadderGroups.map((g) => ({ type: "ladder", data: g, createdAt: g.createdAt }));
+    return [...polls, ...ladders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }, [closedPolls, resolvedLadderGroups]);
+
+  const visibleItems = marketTab === "active" ? activeItems : closedItems;
+  const tabLoading =
+    marketTab === "active"
+      ? pollsLoading || ladderActiveLoading
+      : closedPollsLoading || ladderResolvedLoading;
+
   const activePagination = pollsData?.pagination || {};
   const closedPagination = closedPollsData?.pagination || {};
   const activeHasPagination = Number(activePagination.totalPages) > 1;
@@ -127,10 +157,21 @@ const Home = () => {
                 </div>
               ) : (
                 <div className="mt-5 grid gap-6 grid-cols-1 sm:[grid-template-columns:repeat(auto-fit,minmax(340px,1fr))]">
-                  {visiblePolls.map((poll) => (
-                    <PollCard key={poll._id} poll={poll} compact={marketTab === "closed"} />
-                  ))}
-                  {visiblePolls.length === 0 && (
+                  {visibleItems.map((item) =>
+                    item.type === "ladder" ? (
+                      <LadderGroupCard
+                        key={`ladder-${item.data._id ?? item.data.groupId}`}
+                        group={item.data}
+                      />
+                    ) : (
+                      <PollCard
+                        key={`poll-${item.data._id}`}
+                        poll={item.data}
+                        compact={marketTab === "closed"}
+                      />
+                    )
+                  )}
+                  {visibleItems.length === 0 && (
                     <p className="text-sm text-gray-500 dark:text-slate-300">
                       {marketTab === "active"
                         ? "No active markets right now."
@@ -191,44 +232,6 @@ const Home = () => {
           </div>
         </div>
       </section>
-
-      {/* Ladder / Scalar Markets Section */}
-      {(ladderLoading || ladderGroups.length > 0) && (
-        <section className="py-10">
-          <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-10">
-            <div className="border border-gray-200 dark:border-[#1f2937] rounded-2xl bg-white dark:bg-[#0b1220] px-5 py-5">
-              <div className="flex items-center justify-between pb-4 border-b border-gray-200 dark:border-[#1f2937]">
-                <div className="flex items-center gap-2">
-                  <FaLayerGroup className="w-5 h-5 text-sky-500" />
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                    Scalar Markets
-                  </h2>
-                </div>
-              </div>
-
-              {ladderLoading ? (
-                <div className="flex justify-center py-10">
-                  <LoadingSpinner size="lg" />
-                </div>
-              ) : (
-                <div className="mt-5 grid gap-4 grid-cols-1 sm:[grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
-                  {ladderGroups.map((group) => (
-                    <LadderGroupCard
-                      key={group._id ?? group.groupId}
-                      group={group}
-                    />
-                  ))}
-                  {ladderGroups.length === 0 && (
-                    <p className="text-sm text-gray-500 dark:text-slate-300">
-                      No active scalar markets right now.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-      )}
 
       <section className="bg-gradient-to-br from-stacks-700 via-stacks-600 to-stacks-500 text-white">
         <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-10 py-16 md:py-20">

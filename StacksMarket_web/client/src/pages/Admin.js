@@ -713,6 +713,48 @@ const Admin = () => {
   );
   const ladderGroups = ladderGroupsData?.groups || [];
 
+  // Preload withdrawable surplus for each rung in resolved ladder groups
+  const { data: ladderSurplusByMarket = {} } = useQuery(
+    [
+      "admin-ladder-surplus",
+      ladderGroups
+        .filter((g) => g.status === "resolved")
+        .flatMap((g) => (g.rungs || g.polls || []).map((r) => r.marketId))
+        .join(","),
+    ],
+    async () => {
+      const resolvedGroups = ladderGroups.filter((g) => g.status === "resolved");
+      if (!resolvedGroups.length) return {};
+      const allRungs = resolvedGroups.flatMap((g) =>
+        (g.rungs || g.polls || []).filter((r) => r.marketId).map((r) => r.marketId)
+      );
+      if (!allRungs.length) return {};
+      const entries = await Promise.all(
+        allRungs.map(async (mId) => {
+          try {
+            const info = await getWithdrawableSurplus(Number(mId));
+            return [String(mId), info];
+          } catch {
+            return [String(mId), { error: true }];
+          }
+        })
+      );
+      return Object.fromEntries(entries);
+    },
+    { enabled: ladderGroups.some((g) => g.status === "resolved"), staleTime: 10_000 }
+  );
+
+  // Helper: total surplus for a ladder group
+  const getLadderGroupSurplus = (g) => {
+    const rungs = g.rungs || g.polls || [];
+    let total = 0;
+    for (const r of rungs) {
+      const info = ladderSurplusByMarket[String(r.marketId)];
+      if (info && !info.error) total += Number(info.withdrawable || 0);
+    }
+    return total;
+  };
+
   const addLadderRung = () => {
     setLadderForm((prev) => ({
       ...prev,
@@ -853,21 +895,26 @@ const Admin = () => {
         txId: txGroup.txId,
       });
 
-      // 3. Resolve each rung on-chain (must wait for each to confirm)
+      // 3. Resolve each rung on-chain — wallet prompts one after another automatically
       const group = ladderGroups.find((gr) => Number(gr.groupId) === g);
       const rungs = group?.rungs || [];
       for (const [i, r] of rungs.entries()) {
+        const m = Number(r.marketId);
+        if (!Number.isFinite(m) || m <= 0) continue;
         try {
-          const m = Number(r.marketId);
-          if (Number.isFinite(m) && m > 0) {
-            const txRung = await resolveRung(m);
-            toast.loading(`Waiting for rung ${i + 1}/${rungs.length} confirmation...`, { id: `rung-resolve-${i}` });
-            await pollTx(txRung.txId);
-            toast.dismiss(`rung-resolve-${i}`);
-          }
+          const txRung = await resolveRung(m);
+          toast.loading(`Rung ${i + 1}/${rungs.length} confirming...`, { id: `rung-resolve-${i}` });
+          await pollTx(txRung.txId);
+          toast.dismiss(`rung-resolve-${i}`);
         } catch (err) {
-          console.warn(`[Admin] resolveRung failed for ${r.marketId}:`, err?.message);
-          toast.error(`Rung ${r.marketId} resolve failed: ${err?.message}`);
+          toast.dismiss(`rung-resolve-${i}`);
+          if (err?.message === "User cancelled") {
+            toast.error("Resolution cancelled — remaining rungs skipped");
+            break; // Stop the chain if user cancels
+          }
+          // Skip already-resolved rungs silently
+          if (err?.message?.includes("abort_by_response")) continue;
+          toast.error(`Rung ${i + 1} failed: ${err?.message}`);
         }
       }
 
@@ -878,6 +925,7 @@ const Admin = () => {
         setLadderResolvingGroupId(null);
         setLadderFinalValue("");
         refetchLadderGroups();
+        queryClient.invalidateQueries(["admin-ladder-surplus"]);
         toast.success("Ladder group resolved");
       },
       onError: (err) => toast.error(err?.message || "Failed to resolve ladder group"),
@@ -1341,42 +1389,90 @@ const Admin = () => {
                                 Resolver
                               </button>
                             )
-                          ) : (
-                            <button
-                              disabled={reResolvingGroupId === g.groupId}
-                              onClick={async () => {
-                                const rungs = g.rungs || g.polls || [];
-                                if (!rungs.length) { toast.error("No rungs found"); return; }
-                                setReResolvingGroupId(g.groupId);
-                                try {
-                                  for (const [i, r] of rungs.entries()) {
-                                    const m = Number(r.marketId);
-                                    if (!Number.isFinite(m) || m <= 0) continue;
+                          ) : (() => {
+                            const totalSurplus = getLadderGroupSurplus(g);
+                            const allWithdrawn = totalSurplus <= 0;
+                            const busy = reResolvingGroupId === g.groupId;
+                            return (
+                              <div className="flex flex-col items-start gap-1">
+                                <button
+                                  disabled={busy}
+                                  onClick={async () => {
+                                    const rungs = g.rungs || g.polls || [];
+                                    if (!rungs.length) { toast.error("No rungs found"); return; }
+                                    setReResolvingGroupId(g.groupId);
                                     try {
-                                      toast.loading(`Resolving rung ${i + 1}/${rungs.length} on-chain...`, { id: `re-rung-${i}` });
-                                      const tx = await resolveRung(m);
-                                      await pollTx(tx.txId);
-                                      toast.dismiss(`re-rung-${i}`);
-                                      toast.success(`Rung ${i + 1} resolved on-chain`);
-                                    } catch (err) {
-                                      toast.dismiss(`re-rung-${i}`);
-                                      if (err?.message?.includes("abort_by_response")) {
-                                        toast.success(`Rung ${i + 1} already resolved on-chain`);
-                                      } else if (err?.message !== "User cancelled") {
-                                        toast.error(`Rung ${i + 1} failed: ${err?.message}`);
+                                      for (const [i, r] of rungs.entries()) {
+                                        const m = Number(r.marketId);
+                                        if (!Number.isFinite(m) || m <= 0) continue;
+                                        try {
+                                          toast.loading(`Resolving rung ${i + 1}/${rungs.length}...`, { id: `re-rung-${i}` });
+                                          const tx = await resolveRung(m);
+                                          await pollTx(tx.txId);
+                                          toast.dismiss(`re-rung-${i}`);
+                                        } catch (err) {
+                                          toast.dismiss(`re-rung-${i}`);
+                                          if (!err?.message?.includes("abort_by_response") && err?.message !== "User cancelled") {
+                                            toast.error(`Rung ${i + 1} failed: ${err?.message}`);
+                                          }
+                                        }
                                       }
+                                      toast.success("All rungs resolved");
+                                      refetchLadderGroups();
+                                      queryClient.invalidateQueries(["admin-ladder-surplus"]);
+                                    } finally {
+                                      setReResolvingGroupId(null);
                                     }
-                                  }
-                                  refetchLadderGroups();
-                                } finally {
-                                  setReResolvingGroupId(null);
-                                }
-                              }}
-                              className="btn-outline btn-sm text-amber-500 border-amber-500 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {reResolvingGroupId === g.groupId ? "Resolviendo..." : "Re-resolver rungs"}
-                            </button>
-                          )}
+                                  }}
+                                  className="btn-outline btn-sm text-amber-500 border-amber-500 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {busy ? "Procesando..." : "Re-resolver rungs"}
+                                </button>
+                                <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                                  Surplus: {formatStx(totalSurplus)} STX
+                                </span>
+                                <button
+                                  disabled={busy || allWithdrawn}
+                                  onClick={async () => {
+                                    const rungs = g.rungs || g.polls || [];
+                                    const toWithdraw = rungs.filter((r) => {
+                                      const info = ladderSurplusByMarket[String(r.marketId)];
+                                      return info && !info.error && Number(info.withdrawable || 0) > 0;
+                                    });
+                                    if (!toWithdraw.length) { toast.error("No surplus to withdraw"); return; }
+                                    setReResolvingGroupId(g.groupId);
+                                    try {
+                                      for (const [i, r] of toWithdraw.entries()) {
+                                        const m = Number(r.marketId);
+                                        try {
+                                          toast.loading(`Withdrawing ${i + 1}/${toWithdraw.length}...`, { id: `ws-${i}` });
+                                          const tx = await withdrawSurplus(m);
+                                          await pollTx(tx.txId);
+                                          toast.dismiss(`ws-${i}`);
+                                        } catch (err) {
+                                          toast.dismiss(`ws-${i}`);
+                                          if (!err?.message?.includes("abort_by_response") && err?.message !== "User cancelled") {
+                                            toast.error(`Rung ${i + 1} failed: ${err?.message}`);
+                                          }
+                                        }
+                                      }
+                                      toast.success("Surplus withdrawn");
+                                      refetchLadderGroups();
+                                      queryClient.invalidateQueries(["admin-ladder-surplus"]);
+                                    } finally {
+                                      setReResolvingGroupId(null);
+                                    }
+                                  }}
+                                  className={`btn-outline btn-sm ${allWithdrawn
+                                    ? "opacity-50 cursor-not-allowed text-gray-400 border-gray-400"
+                                    : "text-emerald-500 border-emerald-500 hover:bg-emerald-500/10"
+                                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                >
+                                  {allWithdrawn ? "Surplus Withdrawn" : "Withdraw Surplus"}
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </td>
                     </tr>
