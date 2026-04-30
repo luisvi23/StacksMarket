@@ -4,6 +4,7 @@
 import {
   uintCV,
   stringAsciiCV,
+  stringUtf8CV,
   fetchCallReadOnlyFunction,
   PostConditionMode,
 } from "@stacks/transactions";
@@ -250,7 +251,7 @@ export async function addRung(groupId, marketId, label, initialLiquidity) {
     functionArgs: [
       uintCV(g),
       uintCV(m),
-      stringAsciiCV(lbl),
+      stringUtf8CV(lbl),
       uintCV(liq),
     ],
   });

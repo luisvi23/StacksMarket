@@ -888,6 +888,10 @@ const Admin = () => {
         // 2. Notify backend
         await axios.post(`${BACKEND_URL}/api/ladder/groups/${g}/resolve`, {
           txId: txGroup.txId,
+          outcomes: Object.entries(outcomes || {}).map(([marketId, outcome]) => ({
+            marketId: Number(marketId),
+            outcome,
+          })),
         });
       }
 
