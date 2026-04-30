@@ -146,7 +146,7 @@ const parseBool = (v) => {
 
 /**
  * Fetches metadata for a ladder group.
- * Returns a plain JS object with: groupId, title, resolutionSource, closeTime, status, finalValue
+ * Returns a plain JS object with: groupId, title, resolutionSource, closeTime, status
  */
 export async function getLadderGroupInfo(groupId) {
   const result = await ladderContractRead({
@@ -167,13 +167,12 @@ export async function getLadderGroupInfo(groupId) {
     resolutionSource: parseStringField(getField(data, "source")),
     closeTime: normalizeUInt(getField(data, "closeTime")),
     resolved: parseBool(getField(data, "resolved")),
-    finalValue: normalizeUInt(getField(data, "finalValue")),
   };
 }
 
 /**
  * Fetches info for a single rung (binary market within a ladder group).
- * Returns a plain JS object with: marketId, groupId, threshold, operator, label, isResolved, outcome
+ * Returns a plain JS object with: marketId, groupId, label, isResolved, outcome
  */
 export async function getRungInfo(marketId) {
   const result = await ladderContractRead({
@@ -190,26 +189,9 @@ export async function getRungInfo(marketId) {
   return {
     marketId: Number(marketId),
     groupId: normalizeUInt(getField(data, "group")),
-    threshold: normalizeUInt(getField(data, "threshold")),
-    operator: parseStringField(getField(data, "operator")),
     label: parseStringField(getField(data, "label")),
     isRung: parseBool(getField(data, "isRung")),
   };
-}
-
-/**
- * Preview how a rung would resolve given a hypothetical final value.
- * Returns "YES" | "NO" | null
- */
-export async function getRungOutcomePreview(marketId, finalValue) {
-  const result = await ladderContractRead({
-    functionName: "get-rung-outcome-preview",
-    functionArgs: [uintCV(Number(marketId)), uintCV(Number(finalValue))],
-  });
-
-  const inner = unwrapOk(result);
-  if (!inner) return null;
-  return parseStringField(inner?.value ?? inner);
 }
 
 /**
@@ -250,20 +232,17 @@ export async function createLadderGroup(groupId, title, source, closeTime) {
 
 /**
  * Adds a rung to an existing ladder group.
- * Contract: (add-rung (g uint) (m uint) (threshold uint) (operator string-ascii 3) (label string-ascii 50) (initial-liquidity uint))
+ * Contract: (add-rung (g uint) (m uint) (label string-ascii 50) (initial-liquidity uint))
  */
-export async function addRung(groupId, marketId, threshold, operator, label, initialLiquidity) {
+export async function addRung(groupId, marketId, label, initialLiquidity) {
   const g = Math.floor(Number(groupId));
   const m = Math.floor(Number(marketId));
-  const t = Math.floor(Number(threshold));
   const liq = Math.round(Number(initialLiquidity));
 
   if (!Number.isFinite(g) || g <= 0) throw new Error("Invalid groupId");
   if (!Number.isFinite(m) || m <= 0) throw new Error("Invalid marketId");
-  if (!Number.isFinite(t) || t < 0) throw new Error("Invalid threshold");
   if (!Number.isFinite(liq) || liq <= 0) throw new Error("Invalid initialLiquidity");
 
-  const op = String(operator || "gte").slice(0, 3);
   const lbl = String(label || "").slice(0, 50);
 
   return ladderContractCall({
@@ -271,8 +250,6 @@ export async function addRung(groupId, marketId, threshold, operator, label, ini
     functionArgs: [
       uintCV(g),
       uintCV(m),
-      uintCV(t),
-      stringAsciiCV(op),
       stringAsciiCV(lbl),
       uintCV(liq),
     ],
@@ -280,33 +257,34 @@ export async function addRung(groupId, marketId, threshold, operator, label, ini
 }
 
 /**
- * Resolves an entire ladder group by providing the final oracle value.
- * Contract: (resolve-ladder-group (g uint) (final-value uint))
+ * Resolves an entire ladder group.
+ * Contract: (resolve-ladder-group (g uint))
  */
-export async function resolveLadderGroup(groupId, finalValue) {
+export async function resolveLadderGroup(groupId) {
   const g = Math.floor(Number(groupId));
-  const fv = Math.floor(Number(finalValue));
 
   if (!Number.isFinite(g) || g <= 0) throw new Error("Invalid groupId");
-  if (!Number.isFinite(fv) || fv < 0) throw new Error("Invalid finalValue");
 
   return ladderContractCall({
     functionName: "resolve-ladder-group",
-    functionArgs: [uintCV(g), uintCV(fv)],
+    functionArgs: [uintCV(g)],
   });
 }
 
 /**
  * Resolves a single rung after the group has been resolved.
- * Contract: (resolve-rung (m uint))
+ * Contract: (resolve-rung (m uint) (outcome string-ascii 3))
  */
-export async function resolveRung(marketId) {
+export async function resolveRung(marketId, outcome) {
   const m = Math.floor(Number(marketId));
   if (!Number.isFinite(m) || m <= 0) throw new Error("Invalid marketId");
 
+  const out = String(outcome || "").toUpperCase().slice(0, 3);
+  if (out !== "YES" && out !== "NO") throw new Error("Invalid outcome — expected 'YES' or 'NO'");
+
   return ladderContractCall({
     functionName: "resolve-rung",
-    functionArgs: [uintCV(m)],
+    functionArgs: [uintCV(m), stringAsciiCV(out)],
   });
 }
 
