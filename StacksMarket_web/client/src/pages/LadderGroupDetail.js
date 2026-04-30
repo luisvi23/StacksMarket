@@ -98,8 +98,10 @@ const formatChartTime = (ts) => {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
+// Sort by descending probability so the most likely option appears first.
+// Ties (or unresolved markets without a probability) fall back to creation order.
 const sortRungs = (rungs = []) =>
-  [...rungs].sort((a, b) => Number(b.threshold || 0) - Number(a.threshold || 0));
+  [...rungs].sort((a, b) => Number(b.probability ?? 0) - Number(a.probability ?? 0));
 
 // ------------------- Debounce hook -------------------
 
@@ -564,7 +566,7 @@ const TradePanel = ({ selectedRung, selectedSide, onSideChange, user, onTradeSuc
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-soft p-4 sm:p-5 lg:sticky lg:top-24 space-y-5">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-          {selectedRung.label || `Threshold ${selectedRung.threshold}`}
+          {selectedRung.label}
         </h3>
 
         <div>
@@ -1139,7 +1141,7 @@ const LadderGroupDetail = () => {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <span className="pill">Scalar</span>
+                    <span className="pill">Categorical</span>
                     {isResolved && (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
                         Resolved
@@ -1147,7 +1149,7 @@ const LadderGroupDetail = () => {
                     )}
                   </div>
                   <h1 className="text-lg sm:text-2xl font-semibold text-gray-900 dark:text-gray-100 leading-tight">
-                    {group?.title || "Ladder Market"}
+                    {group?.title || "Categorical Market"}
                   </h1>
                   {group?.resolutionSource && (
                     <p className="mt-1 text-xs sm:text-sm text-gray-500 dark:text-slate-400 line-clamp-2">
@@ -1175,12 +1177,20 @@ const LadderGroupDetail = () => {
                     Closes: <span className="text-gray-700 dark:text-slate-200">{formatCloseDate(group.closeTime)}</span>
                   </p>
                 )}
-                {isResolved && group?.finalValue != null && (
-                  <p className="text-xs text-gray-400 dark:text-slate-500">
-                    Final value:{" "}
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">{group.finalValue}</span>
-                  </p>
-                )}
+                {isResolved && (() => {
+                  const winner = (group?.rungs || []).find(
+                    (r) => String(r.outcome || "").toUpperCase() === "YES"
+                  );
+                  if (!winner) return null;
+                  return (
+                    <p className="text-xs text-gray-400 dark:text-slate-500">
+                      Winning option:{" "}
+                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                        {winner.label}
+                      </span>
+                    </p>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -1255,7 +1265,7 @@ const LadderGroupDetail = () => {
                         strokeWidth={2}
                         dot={false}
                         connectNulls
-                        name={rung.label || `Threshold ${rung.threshold}`}
+                        name={rung.label}
                       />
                     ))}
                   </LineChart>
@@ -1324,7 +1334,7 @@ const LadderGroupDetail = () => {
                                   }}
                                 />
                                 <span className="font-semibold text-gray-900 dark:text-white text-sm sm:text-base">
-                                  {rung.label || `Threshold ${rung.threshold}`}
+                                  {rung.label}
                                 </span>
                               </div>
                             </td>
@@ -1393,7 +1403,7 @@ const LadderGroupDetail = () => {
                   {!isLoading && rungs.length === 0 && (
                     <tr>
                       <td colSpan={4} className="py-10 text-center text-gray-400 dark:text-slate-500">
-                        No rungs in this ladder group yet.
+                        No options in this market yet.
                       </td>
                     </tr>
                   )}
@@ -1409,14 +1419,20 @@ const LadderGroupDetail = () => {
               {group?.resolutionSource && (
                 <p className="text-sm text-gray-600 dark:text-slate-300">{group.resolutionSource}</p>
               )}
-              {isResolved && group?.finalValue != null && (
-                <p className="mt-2 text-sm text-gray-600 dark:text-slate-300">
-                  Final value:{" "}
-                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                    {group.finalValue}
-                  </span>
-                </p>
-              )}
+              {isResolved && (() => {
+                const winner = (group?.rungs || []).find(
+                  (r) => String(r.outcome || "").toUpperCase() === "YES"
+                );
+                if (!winner) return null;
+                return (
+                  <p className="mt-2 text-sm text-gray-600 dark:text-slate-300">
+                    Winning option:{" "}
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                      {winner.label}
+                    </span>
+                  </p>
+                );
+              })()}
             </div>
           )}
 

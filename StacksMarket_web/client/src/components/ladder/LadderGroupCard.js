@@ -85,10 +85,10 @@ const ProbPill = ({ label, pct, color }) => {
 const LadderGroupCard = ({ group }) => {
   if (!group) return null;
 
-  // Sort all rungs by threshold desc (same order as chart/table in LadderGroupDetail)
+  // Sort all rungs by descending probability (same order as chart/table in LadderGroupDetail)
   const allRungsSorted = (group.rungs || [])
     .slice()
-    .sort((a, b) => Number(b.threshold || 0) - Number(a.threshold || 0));
+    .sort((a, b) => Number(b.probability ?? 0) - Number(a.probability ?? 0));
 
   // Show top 3 non-resolved rungs, but keep their original index for color mapping
   const topRungs = allRungsSorted
@@ -117,7 +117,7 @@ const LadderGroupCard = ({ group }) => {
               </div>
               <div className="max-h-14 overflow-hidden">
                 <h3 className="text-base md:text-lg font-semibold text-gray-900 dark:text-gray-100 leading-tight line-clamp-2">
-                  {group.title || "Ladder Market"}
+                  {group.title || "Categorical Market"}
                 </h3>
               </div>
             </div>
@@ -158,7 +158,7 @@ const LadderGroupCard = ({ group }) => {
               {topRungs.map((r) => (
                 <ProbPill
                   key={r.marketId ?? r._id}
-                  label={r.label || `#${r.threshold}`}
+                  label={r.label}
                   pct={r.probability ?? 50}
                   color={RUNG_COLORS[r._colorIdx % RUNG_COLORS.length]}
                 />

@@ -1,7 +1,7 @@
-// LadderGroupView.js — Polymarket-style table view for a ladder group
+// LadderGroupView.js — Polymarket-style table view for a categorical market group
 // Props:
-//   group: { groupId, title, resolutionSource, closeTime, status, finalValue }
-//   rungs: [{ marketId, label, threshold, operator, probability, volume, isResolved, outcome }]
+//   group: { groupId, title, resolutionSource, closeTime, status }
+//   rungs: [{ marketId, label, probability, volume, isResolved, outcome }]
 //   onBuy: (marketId, side) => void  — opens trade modal (caller provides this)
 
 import React, { useState } from "react";
@@ -39,9 +39,9 @@ const totalVolume = (rungs = []) => {
   return rungs.reduce((sum, r) => sum + Number(r.volume || 0), 0);
 };
 
-// Sort rungs by threshold descending (highest first, like Polymarket)
+// Sort options by descending probability (most likely first)
 const sortRungs = (rungs = []) =>
-  [...rungs].sort((a, b) => Number(b.threshold || 0) - Number(a.threshold || 0));
+  [...rungs].sort((a, b) => Number(b.probability ?? 0) - Number(a.probability ?? 0));
 
 // ------------------- Skeleton -------------------
 
@@ -105,7 +105,7 @@ const LadderGroupView = ({ group, rungs = [], loading = false, onBuy }) => {
   if (!group && !loading) {
     return (
       <div className="text-center py-16 text-gray-500 dark:text-slate-400">
-        Ladder group not found.
+        Categorical market not found.
       </div>
     );
   }
@@ -131,7 +131,7 @@ const LadderGroupView = ({ group, rungs = [], loading = false, onBuy }) => {
                   <img src={group.image} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
                 )}
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                  {group?.title || "Ladder Market"}
+                  {group?.title || "Categorical Market"}
                 </h2>
               </div>
               {isResolved && (
@@ -166,14 +166,20 @@ const LadderGroupView = ({ group, rungs = [], loading = false, onBuy }) => {
                   </span>
                 </span>
               )}
-              {isResolved && group?.finalValue != null && (
-                <span>
-                  Final value:{" "}
-                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                    {group.finalValue}
+              {isResolved && (() => {
+                const winner = (rungs || []).find(
+                  (r) => String(r.outcome || "").toUpperCase() === "YES"
+                );
+                if (!winner) return null;
+                return (
+                  <span>
+                    Winning option:{" "}
+                    <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                      {winner.label}
+                    </span>
                   </span>
-                </span>
-              )}
+                );
+              })()}
             </div>
           </>
         )}
@@ -217,7 +223,7 @@ const LadderGroupView = ({ group, rungs = [], loading = false, onBuy }) => {
                       {/* Label */}
                       <td className="py-3 px-4">
                         <span className="font-semibold text-gray-900 dark:text-white">
-                          {rung.label || `Threshold ${rung.threshold}`}
+                          {rung.label}
                         </span>
                       </td>
 
@@ -264,7 +270,7 @@ const LadderGroupView = ({ group, rungs = [], loading = false, onBuy }) => {
             {!loading && sorted.length === 0 && (
               <tr>
                 <td colSpan={4} className="py-10 text-center text-gray-400 dark:text-slate-500">
-                  No rungs in this ladder group yet.
+                  No options in this market yet.
                 </td>
               </tr>
             )}
