@@ -21,7 +21,15 @@ const {
 const { STACKS_TESTNET } = require("@stacks/network");
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const MNEMONIC = "cart verb wealth parade slab logic monitor toss stool radio until devote security vanish violin give cause all cute swim rail add pigeon balcony";
+// Load env vars from .env in the contracts root
+try { require("dotenv").config({ path: require("path").resolve(__dirname, "../.env") }); } catch {}
+
+const MNEMONIC = process.env.TESTNET_MNEMONIC;
+if (!MNEMONIC) {
+  console.error("Missing TESTNET_MNEMONIC env var. Create a .env file in Satcksmarket_contracts/stacksmarket-cont/ with TESTNET_MNEMONIC=\"your 24 words\"");
+  process.exit(1);
+}
+
 const CONTRACT_ADDRESS = "ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP";
 const CONTRACT_NAME    = "market-factory-v21-bias";
 const API             = "https://api.testnet.hiro.so";

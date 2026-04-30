@@ -19,9 +19,22 @@ import {
 } from "@stacks/transactions";
 import { StacksTestnet } from "@stacks/network";
 import { mnemonicToAccount } from "@stacks/wallet-sdk";
+import { fileURLToPath } from "url";
+import path from "path";
+import dotenv from "dotenv";
 
 // ── Config ──────────────────────────────────────────────────────────────────
-const MNEMONIC = "cart verb wealth parade slab logic monitor toss stool radio until devote security vanish violin give cause all cute swim rail add pigeon balcony";
+// Load env vars from .env in the contracts root
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+
+const MNEMONIC = process.env.TESTNET_MNEMONIC;
+if (!MNEMONIC) {
+  console.error("Missing TESTNET_MNEMONIC env var. Create a .env file in Satcksmarket_contracts/stacksmarket-cont/ with TESTNET_MNEMONIC=\"your 24 words\"");
+  process.exit(1);
+}
+
 const CONTRACT_ADDRESS = "ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP";
 const CONTRACT_NAME    = "market-factory-v21-bias";
 const NETWORK = new StacksTestnet({ url: "https://api.testnet.hiro.so" });
