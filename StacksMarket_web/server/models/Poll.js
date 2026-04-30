@@ -263,19 +263,10 @@ const pollSchema = new mongoose.Schema(
       ref: "LadderGroup",
       default: null,
     },
-    // threshold stored as threshold * 100 to avoid float precision issues
-    ladderThreshold: {
-      type: Number,
-      default: null,
-    },
-    ladderOperator: {
-      type: String,
-      enum: ["gte", "lte", null],
-      default: null,
-    },
     ladderLabel: {
       type: String,
       default: null,
+      maxlength: 64,
     },
 
     // Has the market's reward been claimed (server-side flag)
