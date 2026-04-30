@@ -528,44 +528,39 @@ async function applyLadderSideEffects({ functionName, txStatus, rawArgs }) {
   if (txStatus !== "success") return;
 
   if (functionName === "resolve-ladder-group") {
-    // args: (g: uint) (final-value: uint)
-    // rawArgs[0] = group id repr, rawArgs[1] = final value repr
+    // args: (g: uint)
+    // rawArgs[0] = group id repr
     const groupId = parseUIntRepr(rawArgs[0]);
-    const finalValue = parseUIntRepr(rawArgs[1]);
     if (!Number.isFinite(groupId)) return;
 
-    const update = { status: "resolving" };
-    if (Number.isFinite(finalValue)) {
-      update.finalValue = finalValue;
-    }
-
-    await LadderGroup.findOneAndUpdate({ groupId }, { $set: update });
-    return;
-  }
-
-  if (functionName === "resolve-rung") {
-    // args: (m: uint)
-    // rawArgs[0] = market id repr
-    const marketId = parseUIntRepr(rawArgs[0]);
-    if (!Number.isFinite(marketId)) return;
-
-    // The actual resolution outcome is determined by resolve-rung on-chain using
-    // the stored final-value. We just mark the rung's group as "resolving" if not
-    // already resolved — the full resolution is handled by resolve-ladder-group.
-    const poll = await Poll.findOne({ marketId: String(marketId) }).select(
-      "_id ladderGroupId"
-    );
-    if (!poll?.ladderGroupId) return;
-
     await LadderGroup.findOneAndUpdate(
-      { groupId: poll.ladderGroupId, status: "active" },
+      { groupId },
       { $set: { status: "resolving" } }
     );
     return;
   }
 
+  if (functionName === "resolve-rung") {
+    // args: (m: uint) (outcome: string)
+    // rawArgs[0] = market id repr, rawArgs[1] = outcome repr ("YES" or "NO")
+    const marketId = parseUIntRepr(rawArgs[0]);
+    if (!Number.isFinite(marketId)) return;
+
+    const outcome = parseAsciiRepr(rawArgs[1]) || "";
+    if (outcome !== "YES" && outcome !== "NO") return;
+
+    const poll = await Poll.findOne({ marketId: String(marketId) });
+    if (!poll || poll.marketType !== "ladder") return;
+
+    poll.isResolved = true;
+    poll.winningOption = outcome === "YES" ? 0 : 1;
+    poll.isActive = false;
+    await poll.save();
+    return;
+  }
+
   if (functionName === "add-rung") {
-    // args: (g: uint) (m: uint) (threshold: uint) (operator: string) (label: string) (initial-liquidity: uint)
+    // args: (g: uint) (m: uint) (label: string) (initial-liquidity: uint)
     // rawArgs[0] = group id, rawArgs[1] = market id
     // No automatic DB side-effect here beyond what the admin REST route already handles.
     // Log for audit purposes only.

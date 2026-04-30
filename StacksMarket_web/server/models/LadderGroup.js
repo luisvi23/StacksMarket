@@ -34,10 +34,6 @@ const ladderGroupSchema = new mongoose.Schema(
       enum: ["active", "resolving", "resolved"],
       default: "active",
     },
-    finalValue: {
-      type: Number,
-      default: null,
-    },
     resolvedAt: {
       type: Date,
       default: null,

@@ -205,7 +205,8 @@ async function syncAllActiveMarkets({ logger = console, timeoutMs } = {}) {
  * the resolved status has changed.
  *
  * Contract read-only: get-ladder-group-info (g: uint)
- * Expected tuple fields: { finalValue: uint, status: ascii, ... }
+ * Per-rung outcomes are written by the on-chain indexer when it observes
+ * resolve-rung calls; this sync only confirms the group-level status.
  */
 async function syncLadderGroup(groupId, { logger = console, timeoutMs = 8000 } = {}) {
   try {
@@ -249,8 +250,6 @@ async function syncLadderGroup(groupId, { logger = console, timeoutMs = 8000 } =
       return { synced: false, reason: "unexpected-cv-shape" };
     }
 
-    // Extract final-value — contract stores it as a uint (0 when not yet resolved)
-    const rawFinalValue = toBigIntOrNull(fields["final-value"]?.value ?? fields["final-value"]);
     // Extract resolved status — contract may expose a boolean or status string
     const rawResolved = fields["resolved"]?.value ?? fields["is-resolved"]?.value;
 
@@ -270,59 +269,16 @@ async function syncLadderGroup(groupId, { logger = console, timeoutMs = 8000 } =
       group.status = "resolved";
       group.resolvedAt = group.resolvedAt || new Date();
       changed = true;
-    } else if (!isResolvedOnChain && group.status === "active") {
-      // On-chain may have set resolving but not fully resolved yet — mark resolving
-      // (only upgrade, never downgrade)
-    }
-
-    if (rawFinalValue != null) {
-      const numericFinalValue = Number(rawFinalValue);
-      if (Number.isFinite(numericFinalValue) && group.finalValue !== numericFinalValue) {
-        group.finalValue = numericFinalValue;
-        changed = true;
-      }
     }
 
     if (changed) {
       await group.save();
       logger.log?.(
-        `[ladder-sync] groupId=${groupId} updated status=${group.status} finalValue=${group.finalValue}`
+        `[ladder-sync] groupId=${groupId} updated status=${group.status}`
       );
     }
 
-    // If resolved on-chain and we have a finalValue, recompute outcomes for
-    // any ladder-rung Polls that have not yet been marked resolved in MongoDB.
-    if (group.status === "resolved" && group.finalValue != null) {
-      const unresolvedPolls = await Poll.find({
-        ladderGroupId: group.groupId,
-        marketType: "ladder",
-        isResolved: false,
-      });
-
-      if (unresolvedPolls.length > 0) {
-        for (const poll of unresolvedPolls) {
-          const threshold = poll.ladderThreshold;
-          const operator = poll.ladderOperator;
-
-          let outcome = null;
-          if (operator === "gte") outcome = group.finalValue >= threshold;
-          else if (operator === "lte") outcome = group.finalValue <= threshold;
-
-          if (outcome !== null) {
-            poll.isResolved = true;
-            poll.winningOption = outcome ? 0 : 1; // 0 = YES, 1 = NO
-            poll.isActive = false;
-            await poll.save();
-            logger.log?.(
-              `[ladder-sync] rung pollId=${poll._id} marketId=${poll.marketId} ` +
-              `threshold=${threshold} operator=${operator} => ${outcome ? "YES" : "NO"}`
-            );
-          }
-        }
-      }
-    }
-
-    return { synced: true, changed, groupId: group.groupId, status: group.status, finalValue: group.finalValue };
+    return { synced: true, changed, groupId: group.groupId, status: group.status };
   } catch (error) {
     logger.warn?.(
       `[ladder-sync] failed groupId=${groupId}: ${error?.message || error}`
