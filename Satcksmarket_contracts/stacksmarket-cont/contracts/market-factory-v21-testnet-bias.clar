@@ -1459,21 +1459,13 @@
 )
 
 ;; ===========================================================
-;; v21 LADDER MARKET EXTENSION
+;; v21 LADDER (CATEGORICAL) MARKET EXTENSION
 ;; ===========================================================
 ;;
 ;; A "ladder group" is a set of binary markets (rungs) sharing one
-;; question but with different numeric thresholds.  The group is
-;; resolved in a single admin call (resolve-ladder-group) that
-;; records the final observed value on-chain.  Individual rungs are
-;; then resolved one-by-one via resolve-rung, which computes the
-;; binary YES/NO outcome automatically from the stored final value
-;; and the rung's threshold + operator, then delegates to the same
-;; internal resolve logic as the existing `resolve` function.
-;;
-;; All threshold / final-value inputs are multiplied by 100 by the
-;; caller so that 2 decimal places of precision are preserved while
-;; staying in uint (e.g. $100.50 = 10050).
+;; question but representing distinct categorical outcomes.  The group
+;; is resolved by the admin marking it resolved; each rung is then
+;; resolved one-by-one via resolve-rung with an explicit YES/NO outcome.
 ;;
 ;; New error codes start at u800 to avoid collisions with v20 codes.
 ;; ===========================================================
@@ -1483,9 +1475,9 @@
 (define-constant ERR-LADDER-NOT-FOUND       (err u801))
 (define-constant ERR-LADDER-NOT-RESOLVED    (err u802))
 (define-constant ERR-RUNG-NOT-FOUND         (err u803))
-(define-constant ERR-RUNG-BAD-OPERATOR      (err u804))
 (define-constant ERR-RUNG-ALREADY-EXISTS      (err u805))
 (define-constant ERR-LADDER-ALREADY-RESOLVED  (err u806))
+(define-constant ERR-INVALID-OUTCOME          (err u807))
 
 ;; --------------------- ladder group state maps ----------------------
 ;; All values keyed by group-id g (uint).
@@ -1496,22 +1488,16 @@
 (define-map ladder-group-source    { g: uint } { source: (string-ascii 200) })
 ;; Has the group been resolved yet?
 (define-map ladder-group-resolved  { g: uint } { v: bool })
-;; Final observed value * 100 (2 decimal places). Set by resolve-ladder-group.
-(define-map ladder-group-final-value { g: uint } { v: uint })
 ;; Unix timestamp after which the group is expected to close
 (define-map ladder-group-close-time { g: uint } { v: uint })
 
 ;; ----------------------- rung state maps ----------------------------
-;; Each rung links a binary market-id (m) to a ladder group + threshold.
+;; Each rung links a binary market-id (m) to a ladder group.
 
 ;; Which group does this market belong to?
 (define-map rung-group     { m: uint } { g: uint })
-;; Threshold * 100 (2 decimal places) the rung tests against
-(define-map rung-threshold { m: uint } { v: uint })
-;; "gte": YES if final-value >= threshold; "lte": YES if final-value <= threshold
-(define-map rung-operator  { m: uint } { op: (string-ascii 3) })
-;; Human-readable label shown in the UI (e.g. "$100", "$110")
-(define-map rung-label     { m: uint } { label: (string-ascii 50) })
+;; Human-readable label shown in the UI (e.g. category name)
+(define-map rung-label     { m: uint } { label: (string-utf8 64) })
 
 ;; ----------------------- ladder group helpers -----------------------
 (define-private (ladder-group-exists (g uint))
@@ -1522,30 +1508,9 @@
   (default-to false (get v (map-get? ladder-group-resolved { g: g })))
 )
 
-(define-private (get-ladder-final-value (g uint))
-  (default-to u0 (get v (map-get? ladder-group-final-value { g: g })))
-)
-
 ;; ----------------------- rung helpers --------------------------------
 (define-private (rung-exists (m uint))
   (is-some (map-get? rung-group { m: m }))
-)
-
-;; Validate that operator is exactly "gte" or "lte"
-(define-private (valid-operator (op (string-ascii 3)))
-  (or (is-eq op "gte") (is-eq op "lte"))
-)
-
-;; Compute YES/NO given a final value, threshold, and operator string.
-;; Returns "YES" or "NO" as (string-ascii 3).
-(define-private (compute-rung-outcome
-    (final-value uint)
-    (threshold   uint)
-    (op          (string-ascii 3)))
-  (if (is-eq op "gte")
-      (if (>= final-value threshold) "YES" "NO")
-      ;; "lte"
-      (if (<= final-value threshold) "YES" "NO"))
 )
 
 ;; Internal resolve: same solvency checks + state transitions as `resolve`,
@@ -1585,7 +1550,6 @@
     (map-set ladder-group-title     { g: g } { title:  title  })
     (map-set ladder-group-source    { g: g } { source: source })
     (map-set ladder-group-resolved  { g: g } { v: false })
-    (map-set ladder-group-final-value { g: g } { v: u0 })
     (map-set ladder-group-close-time  { g: g } { v: close-time })
     (ok g)
   )
@@ -1594,13 +1558,10 @@
 ;; add-rung
 ;; Admin creates the underlying binary market (via create-market) and
 ;; registers the rung mapping.  g must already exist.
-;; operator must be "gte" or "lte".
 (define-public (add-rung
     (g               uint)
     (m               uint)
-    (threshold       uint)
-    (operator        (string-ascii 3))
-    (label           (string-ascii 50))
+    (label           (string-utf8 64))
     (initial-liquidity uint))
   (begin
     (try! (only-admin))
@@ -1610,56 +1571,46 @@
     (asserts! (not (get-ladder-resolved g)) ERR-LADDER-ALREADY-RESOLVED)
     ;; Market m must not already be a rung
     (asserts! (not (rung-exists m)) ERR-RUNG-ALREADY-EXISTS)
-    ;; Operator must be valid
-    (asserts! (valid-operator operator) ERR-RUNG-BAD-OPERATOR)
     ;; Create the underlying binary market
     (try! (create-market m initial-liquidity))
     ;; Register rung mappings
     (map-set rung-group     { m: m } { g:     g         })
-    (map-set rung-threshold { m: m } { v:     threshold })
-    (map-set rung-operator  { m: m } { op:    operator  })
     (map-set rung-label     { m: m } { label: label     })
     (ok m)
   )
 )
 
 ;; resolve-ladder-group
-;; Admin records the final observed value for a group and marks it as resolved.
+;; Admin marks the group as resolved.
 ;; This does NOT auto-resolve individual rungs. Call resolve-rung per rung.
-(define-public (resolve-ladder-group (g uint) (final-value uint))
+(define-public (resolve-ladder-group (g uint))
   (begin
     (try! (only-admin))
     (asserts! (ladder-group-exists g) ERR-LADDER-NOT-FOUND)
     ;; Idempotency guard: do not re-resolve an already-resolved group
     (asserts! (not (get-ladder-resolved g)) ERR-LADDER-ALREADY-EXISTS)
-    (map-set ladder-group-resolved    { g: g } { v: true        })
-    (map-set ladder-group-final-value { g: g } { v: final-value })
-    (ok { group: g, finalValue: final-value })
+    (map-set ladder-group-resolved { g: g } { v: true })
+    (ok { group: g })
   )
 )
 
 ;; resolve-rung
 ;; Admin resolves a single rung market after its group has been resolved.
-;; Outcome is computed automatically from the stored final value.
-(define-public (resolve-rung (m uint))
+;; The outcome ("YES" or "NO") is provided directly by the admin.
+(define-public (resolve-rung (m uint) (outcome (string-ascii 3)))
   (begin
     (try! (only-admin))
     ;; Market must be a rung
     (asserts! (rung-exists m) ERR-RUNG-NOT-FOUND)
+    ;; Outcome must be exactly "YES" or "NO"
+    (asserts! (or (is-eq outcome "YES") (is-eq outcome "NO")) ERR-INVALID-OUTCOME)
     (let (
-      (g         (unwrap! (get g  (map-get? rung-group     { m: m })) ERR-RUNG-NOT-FOUND))
-      (threshold (unwrap! (get v  (map-get? rung-threshold { m: m })) ERR-RUNG-NOT-FOUND))
-      (operator  (unwrap! (get op (map-get? rung-operator  { m: m })) ERR-RUNG-NOT-FOUND))
+      (g (unwrap! (get g (map-get? rung-group { m: m })) ERR-RUNG-NOT-FOUND))
     )
       ;; Group must be resolved first
       (asserts! (get-ladder-resolved g) ERR-LADDER-NOT-RESOLVED)
-      (let (
-        (final-value (get-ladder-final-value g))
-        (result      (compute-rung-outcome final-value threshold operator))
-      )
-        (try! (do-resolve m result))
-        (ok { market: m, group: g, finalValue: final-value, outcome: result })
-      )
+      (try! (do-resolve m outcome))
+      (ok { market: m, group: g, outcome: outcome })
     )
   )
 )
@@ -1673,16 +1624,14 @@
     (title-entry  (map-get? ladder-group-title      { g: g }))
     (source-entry (map-get? ladder-group-source     { g: g }))
     (res-entry    (map-get? ladder-group-resolved   { g: g }))
-    (fv-entry     (map-get? ladder-group-final-value { g: g }))
     (ct-entry     (map-get? ladder-group-close-time  { g: g }))
   )
     {
-      exists:     (is-some title-entry),
-      title:      (default-to "" (get title  title-entry)),
-      source:     (default-to "" (get source source-entry)),
-      resolved:   (default-to false (get v res-entry)),
-      finalValue: (default-to u0 (get v fv-entry)),
-      closeTime:  (default-to u0 (get v ct-entry))
+      exists:    (is-some title-entry),
+      title:     (default-to "" (get title  title-entry)),
+      source:    (default-to "" (get source source-entry)),
+      resolved:  (default-to false (get v res-entry)),
+      closeTime: (default-to u0 (get v ct-entry))
     }
   )
 )
@@ -1691,17 +1640,13 @@
 ;; Returns the rung metadata for market m.
 (define-read-only (get-rung-info (m uint))
   (let (
-    (g-entry   (map-get? rung-group     { m: m }))
-    (thr-entry (map-get? rung-threshold { m: m }))
-    (op-entry  (map-get? rung-operator  { m: m }))
-    (lbl-entry (map-get? rung-label     { m: m }))
+    (g-entry   (map-get? rung-group { m: m }))
+    (lbl-entry (map-get? rung-label { m: m }))
   )
     {
-      isRung:    (is-some g-entry),
-      group:     (default-to u0  (get g  g-entry)),
-      threshold: (default-to u0  (get v  thr-entry)),
-      operator:  (default-to ""  (get op op-entry)),
-      label:     (default-to ""  (get label lbl-entry))
+      isRung: (is-some g-entry),
+      group:  (default-to u0  (get g g-entry)),
+      label:  (default-to u"" (get label lbl-entry))
     }
   )
 )
@@ -1710,25 +1655,4 @@
 ;; Returns true if market m was created as a ladder rung.
 (define-read-only (is-rung (m uint))
   (rung-exists m)
-)
-
-;; get-rung-outcome-preview
-;; Returns the outcome that resolve-rung would produce if the group's
-;; final value were final-value, without writing anything.
-;; Returns "YES" or "NO", or "" if the market is not a rung.
-(define-read-only (get-rung-outcome-preview (m uint) (final-value uint))
-  (let (
-    (thr-entry (map-get? rung-threshold { m: m }))
-    (op-entry  (map-get? rung-operator  { m: m }))
-  )
-    (if (and (is-some thr-entry) (is-some op-entry))
-        (let (
-          (threshold (unwrap-panic (get v  thr-entry)))
-          (operator  (unwrap-panic (get op op-entry)))
-        )
-          (compute-rung-outcome final-value threshold operator)
-        )
-        ""
-    )
-  )
 )
