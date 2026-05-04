@@ -18,7 +18,8 @@
   "dependencies": {
     "@stacks/wallet-sdk": "^7.2.0",
     "chokidar-cli": "^3.0.0",
-    "cross-fetch": "^4.1.0"
+    "cross-fetch": "^4.1.0",
+    "dotenv": "^16.3.1"
   },
   "devDependencies": {
     "@hirosystems/clarinet-sdk": "^3.8.1",

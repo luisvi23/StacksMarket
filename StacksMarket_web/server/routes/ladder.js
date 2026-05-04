@@ -171,12 +171,27 @@ router.post("/groups/:groupId/resolve", adminAuth, async (req, res) => {
     return res.status(400).json({ message: "outcomes (non-empty array) is required" });
   }
 
+  // Detect duplicate marketIds
+  const seenMarketIds = new Set();
   for (const item of outcomes) {
     if (!item || item.marketId == null || (item.outcome !== "YES" && item.outcome !== "NO")) {
       return res.status(400).json({
         message: "each outcome must be { marketId, outcome: 'YES' | 'NO' }",
       });
     }
+    const key = String(item.marketId);
+    if (seenMarketIds.has(key)) {
+      return res.status(400).json({ message: `duplicate marketId in outcomes: ${key}` });
+    }
+    seenMarketIds.add(key);
+  }
+
+  // Categorical market rule: exactly one rung must be the winner (YES)
+  const yesCount = outcomes.filter((o) => o.outcome === "YES").length;
+  if (yesCount !== 1) {
+    return res.status(400).json({
+      message: `exactly 1 rung must be YES, got ${yesCount} (categorical market rule)`,
+    });
   }
 
   try {
@@ -189,10 +204,6 @@ router.post("/groups/:groupId/resolve", adminAuth, async (req, res) => {
       return res.status(400).json({ message: "Ladder group is already resolved" });
     }
 
-    group.status = "resolved";
-    group.resolvedAt = new Date();
-    await group.save();
-
     // Index polls by marketId for fast lookup
     const pollByMarketId = new Map();
     for (const poll of group.polls) {
@@ -201,7 +212,27 @@ router.post("/groups/:groupId/resolve", adminAuth, async (req, res) => {
       }
     }
 
+    // Validate that every rung in the group has a corresponding outcome
+    const expectedMarketIds = new Set(pollByMarketId.keys());
+    const providedMarketIds = new Set(outcomes.map((o) => String(o.marketId)));
+    const missing = [...expectedMarketIds].filter((id) => !providedMarketIds.has(id));
+    if (missing.length > 0) {
+      return res.status(400).json({
+        message: `missing outcomes for rungs: ${missing.join(", ")}`,
+      });
+    }
+    // Reject outcomes for rungs not in this group
+    const unknown = [...providedMarketIds].filter((id) => !expectedMarketIds.has(id));
+    if (unknown.length > 0) {
+      return res.status(400).json({
+        message: `unknown rungs not part of this group: ${unknown.join(", ")}`,
+      });
+    }
+
+    // Apply outcomes — cache the winning rung on the group document
     const rungResults = [];
+    let winningMarketId = null;
+    let winningRungLabel = null;
     for (const { marketId, outcome } of outcomes) {
       const poll = pollByMarketId.get(String(marketId));
       if (!poll) continue;
@@ -212,6 +243,11 @@ router.post("/groups/:groupId/resolve", adminAuth, async (req, res) => {
       poll.isActive = false;
       await poll.save();
 
+      if (outcome === "YES") {
+        winningMarketId = Number(poll.marketId);
+        winningRungLabel = poll.ladderLabel || null;
+      }
+
       rungResults.push({
         pollId: poll._id,
         marketId: poll.marketId,
@@ -219,6 +255,12 @@ router.post("/groups/:groupId/resolve", adminAuth, async (req, res) => {
         outcome,
       });
     }
+
+    group.status = "resolved";
+    group.resolvedAt = new Date();
+    group.winningMarketId = winningMarketId;
+    group.winningRungLabel = winningRungLabel;
+    await group.save();
 
     // Emit live updates via socket.io
     const io = req.app.get("io");
@@ -291,6 +333,8 @@ router.get("/public/groups", async (req, res) => {
       image: g.image || null,
       closeTime: g.closeTime,
       status: g.status,
+      winningMarketId: g.winningMarketId ?? null,
+      winningRungLabel: g.winningRungLabel ?? null,
       rungs: (g.polls || []).map((poll) => {
         const yesOption = Array.isArray(poll.options) ? poll.options[0] : null;
         return {
@@ -355,6 +399,8 @@ router.get("/groups/:groupId", async (req, res) => {
       closeTime: group.closeTime,
       status: group.status,
       resolvedAt: group.resolvedAt,
+      winningMarketId: group.winningMarketId ?? null,
+      winningRungLabel: group.winningRungLabel ?? null,
       commentPollId: group.commentPollRef ? String(group.commentPollRef) : null,
       rungs,
     });
