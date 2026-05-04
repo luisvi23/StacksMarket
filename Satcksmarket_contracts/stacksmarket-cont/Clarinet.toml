@@ -36,3 +36,8 @@ epoch          = "3.4"
 path           = "contracts/market-factory-v21-testnet-bias.clar"
 clarity_version = 4
 epoch          = "3.4"
+
+[contracts.market-factory-v23-testnet-bias]
+path           = "contracts/market-factory-v23-testnet-bias.clar"
+clarity_version = 4
+epoch          = "3.4"

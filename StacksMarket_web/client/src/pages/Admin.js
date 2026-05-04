@@ -896,7 +896,8 @@ const Admin = () => {
       }
 
       // 3. Resolve each rung on-chain with admin-selected outcome — wallet prompts one after another
-      const rungs = group?.rungs || [];
+      // Admin endpoint returns populated `polls`; public endpoint returns transformed `rungs`. Support both.
+      const rungs = group?.rungs || group?.polls || [];
       for (const [i, r] of rungs.entries()) {
         const m = Number(r.marketId);
         if (!Number.isFinite(m) || m <= 0) continue;
@@ -1469,7 +1470,11 @@ const Admin = () => {
                                       setLadderResolvingGroupId(g.groupId);
                                       const init = {};
                                       rungs.forEach((r) => {
-                                        init[String(r.marketId)] = String(r.outcome || "").toUpperCase() === "YES" ? "YES" : "NO";
+                                        // Read from `outcome` (public endpoint) or derive from `winningOption` (admin endpoint)
+                                        const isYes =
+                                          String(r.outcome || "").toUpperCase() === "YES" ||
+                                          r.winningOption === 0;
+                                        init[String(r.marketId)] = isYes ? "YES" : "NO";
                                       });
                                       setLadderRungOutcomes(init);
                                     }}

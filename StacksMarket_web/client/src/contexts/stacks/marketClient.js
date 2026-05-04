@@ -1009,14 +1009,19 @@ export async function pollTx(txId, interval = 5000, maxAttempts = 60) {
     const waitMs = i < FAST_ATTEMPTS ? FAST_INTERVAL : interval;
     let res;
     try {
-      res = await axios.get(`${STACKS_PROXY_API}/tx/${txId}`);
+      // Treat 404 as a non-error response (tx hasn't propagated to Hiro yet — common for fresh txs)
+      res = await axios.get(`${STACKS_PROXY_API}/tx/${txId}`, {
+        validateStatus: (s) => (s >= 200 && s < 300) || s === 404,
+      });
     } catch (err) {
-      const statusCode = err?.response?.status;
-      if (statusCode === 404) {
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-        continue;
-      }
-      throw err;
+      // Network or non-404 errors — silently retry
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      continue;
+    }
+    if (res.status === 404) {
+      // Tx not yet indexed by Hiro; keep polling without console noise
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      continue;
     }
     const status = res.data.tx_status;
     const result = res.data.tx_result;
