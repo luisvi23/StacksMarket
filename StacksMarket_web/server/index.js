@@ -16,10 +16,67 @@ const LadderGroup = require("./models/LadderGroup");
 // Load environment variables
 dotenv.config();
 
-if (!process.env.JWT_SECRET) {
-  console.error('FATAL: JWT_SECRET environment variable is not set. Server cannot start.');
-  process.exit(1);
-}
+// ---------------------------------------------------------------------------
+// Startup environment validation
+// Fail fast with a clear message instead of silently falling back to mainnet,
+// an empty CORS origin, or the wrong contract — all of which produce confusing
+// "works but nothing syncs / wallet rejects" failures in a fresh deployment.
+// ---------------------------------------------------------------------------
+(function validateEnv() {
+  const errors = [];
+  const warnings = [];
+
+  if (!process.env.JWT_SECRET) {
+    errors.push("JWT_SECRET is required (auth/token signing).");
+  }
+  if (!process.env.MONGODB_URI) {
+    warnings.push("MONGODB_URI not set — falling back to mongodb://localhost:27017.");
+  }
+
+  const network = String(process.env.STACKS_NETWORK || "").toLowerCase();
+  if (!network) {
+    errors.push(
+      "STACKS_NETWORK is required ('testnet' or 'mainnet'). " +
+        "Without it the on-chain indexer/sync default to mainnet and will not see your testnet markets."
+    );
+  } else if (network !== "testnet" && network !== "mainnet") {
+    errors.push(`STACKS_NETWORK must be 'testnet' or 'mainnet', got '${network}'.`);
+  }
+
+  if (!process.env.CONTRACT_NAME) {
+    errors.push(
+      "CONTRACT_NAME is required (e.g. market-factory-v23-testnet-bias). " +
+        "The on-chain indexer only processes transactions for this exact contract."
+    );
+  }
+  if (!process.env.CONTRACT_ADDRESS) {
+    errors.push("CONTRACT_ADDRESS is required (the deployer principal of the contract).");
+  }
+
+  if (!process.env.CLIENT_URL) {
+    warnings.push(
+      "CLIENT_URL not set — CORS allow-list is empty, so the browser frontend " +
+        "and socket.io connections will be rejected. Set it to your frontend origin(s)."
+    );
+  }
+
+  if (!process.env.HIRO_API_KEY) {
+    warnings.push(
+      "HIRO_API_KEY not set — Hiro public API is rate-limited (~a few req/min); " +
+        "the on-chain indexer/sync will frequently fail. Get a free key at https://platform.hiro.so/."
+    );
+  }
+
+  for (const w of warnings) console.warn(`[env-check] WARNING: ${w}`);
+  if (errors.length) {
+    console.error("FATAL: invalid environment configuration. Server cannot start.");
+    for (const e of errors) console.error(`  - ${e}`);
+    process.exit(1);
+  }
+  console.log(
+    `[env-check] OK — network=${network} contract=${process.env.CONTRACT_ADDRESS}.${process.env.CONTRACT_NAME}`
+  );
+})();
 
 const app = express();
 const server = http.createServer(app);
@@ -60,7 +117,12 @@ function startLadderGroupSyncer() {
   const INTERVAL_MS = Number(process.env.LADDER_GROUP_SYNC_INTERVAL_MS) || 60_000;
   _ladderGroupSyncTimer = setInterval(async () => {
     try {
-      const groups = await LadderGroup.find({ status: { $in: ["active", "resolving"] } }).select("groupId");
+      // Include "resolved" too — syncLadderGroup will downgrade back to
+      // "resolving" if it was incorrectly closed before all rungs settled
+      // (regression from a pre-fix sync that closed at the first rung).
+      const groups = await LadderGroup.find({
+        status: { $in: ["active", "resolving", "resolved"] },
+      }).select("groupId");
       if (!groups.length) return;
       for (const group of groups) {
         await syncLadderGroup(group.groupId, { logger: console }).catch((err) => {

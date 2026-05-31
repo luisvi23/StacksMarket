@@ -258,17 +258,38 @@ async function syncLadderGroup(groupId, { logger = console, timeoutMs = 8000 } =
       rawResolved === "true" ||
       String(rawResolved || "").toLowerCase() === "true";
 
-    const group = await LadderGroup.findOne({ groupId: Number(groupId) });
+    const group = await LadderGroup.findOne({ groupId: Number(groupId) }).populate("polls");
     if (!group) {
       return { synced: false, reason: "group-not-found-in-db" };
     }
 
+    // IMPORTANT: the on-chain `ladder-group-resolved` flag is just a gate that
+    // turns true the moment `resolve-ladder-group` is called for the first
+    // time — it does NOT mean every rung is settled. Rungs are resolved
+    // individually with `resolve-rung`. So we must check every rung's
+    // `isResolved` in MongoDB before promoting the group to "resolved".
+    const ladderRungs = (group.polls || []).filter(
+      (p) => p && p.marketType === "ladder"
+    );
+    const allRungsResolved =
+      ladderRungs.length > 0 && ladderRungs.every((p) => p.isResolved);
+
     let changed = false;
 
-    if (isResolvedOnChain && group.status !== "resolved") {
-      group.status = "resolved";
-      group.resolvedAt = group.resolvedAt || new Date();
-      changed = true;
+    if (isResolvedOnChain) {
+      if (allRungsResolved && group.status !== "resolved") {
+        // Gate is open on-chain AND every rung is settled → group is fully resolved.
+        group.status = "resolved";
+        group.resolvedAt = group.resolvedAt || new Date();
+        changed = true;
+      } else if (!allRungsResolved && group.status !== "resolving") {
+        // Gate is open on-chain but rungs are still tradeable.
+        // This also reverses an incorrect previous "resolved" set by the
+        // pre-fix sync (which would close the group at the first rung).
+        group.status = "resolving";
+        if (group.resolvedAt) group.resolvedAt = null;
+        changed = true;
+      }
     }
 
     if (changed) {

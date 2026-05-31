@@ -25,7 +25,7 @@ services:
       - key: CONTRACT_ADDRESS
         value: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
       - key: CONTRACT_NAME
-        value: market-factory-v21-testnet-bias
+        value: market-factory-v23-testnet-bias
       # Secrets — set via Render dashboard (sync: false means not committed):
       - key: MONGODB_URI
         sync: false

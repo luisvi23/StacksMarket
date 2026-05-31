@@ -414,6 +414,19 @@ const Admin = () => {
     }
   );
 
+  // Toggle public visibility ("enabled" flag) inline from the polls table.
+  const togglePollEnabledMutation = useMutation(
+    async ({ id, enabled }) =>
+      (await axios.put(`${BACKEND_URL}/api/admin/polls/${id}`, { enabled })).data,
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(["admin-polls"]);
+      },
+      onError: (err) =>
+        toast.error(err?.response?.data?.message || err?.message || "Failed to toggle visibility"),
+    }
+  );
+
   const resolveMutation = useMutation(
     async ({ id, winningOption }) => {
       const poll = (polls?.polls || []).find((p) => p._id === id);
@@ -700,7 +713,7 @@ const Admin = () => {
     description: "",
     image: "",
     closeDate: "",
-    rungs: [{ label: "", initialLiquidity: "", initialYesPct: "50" }],
+    rungs: [{ label: "", image: "", initialLiquidity: "", initialYesPct: "50" }],
   };
   const [ladderForm, setLadderForm] = useState(emptyLadderForm);
 
@@ -761,7 +774,7 @@ const Admin = () => {
       ...prev,
       rungs: [
         ...prev.rungs,
-        { label: "", initialLiquidity: "", initialYesPct: "50" },
+        { label: "", image: "", initialLiquidity: "", initialYesPct: "50" },
       ],
     }));
   };
@@ -822,104 +835,230 @@ const Admin = () => {
       await pollTx(txGroup.txId);
       toast.dismiss("ladder-confirm");
 
-      // 3. Add each rung on-chain, wait for confirmation, set bias if not 50, then register in backend
+      // 3. Add each rung on-chain. Order per rung:
+      //    addRung -> confirm -> register in BD (marketId saved EARLY so funds
+      //    are always traceable/recoverable) -> set bias (optional) -> confirm.
+      //    On ANY failure we STOP immediately (no point spending more STX) and
+      //    throw an actionable error; whatever rungs already confirmed on-chain
+      //    are recoverable via the "Recover funds" button on the group.
+      const total = ladderForm.rungs.length;
+      let createdCount = 0;
       for (const [i, r] of ladderForm.rungs.entries()) {
         const m = ts + i + 1;
         const liq = stxToUstx(r.initialLiquidity);
         const lbl = r.label.trim().slice(0, 50);
         const pct = Math.round(Number(r.initialYesPct));
 
-        const txRung = await addRung(g, m, lbl, liq);
+        try {
+          const txRung = await addRung(g, m, lbl, liq);
 
-        // Wait for add-rung to confirm before set-market-bias (bias requires market to exist)
-        if (pct !== 50) {
-          toast.loading(`Waiting for rung ${i + 1} confirmation...`, { id: `rung-confirm-${i}` });
+          // Confirm add-rung before anything else (bias requires the market to exist).
+          toast.loading(`Confirming option ${i + 1}/${total} on-chain...`, { id: `rung-confirm-${i}` });
           await pollTx(txRung.txId);
           toast.dismiss(`rung-confirm-${i}`);
-          try {
-            await setMarketBias(m, pct);
-          } catch (err) {
-            console.warn(`[Admin] setMarketBias failed for rung ${m}:`, err?.message);
-          }
-        }
 
-        try {
+          // Register in the backend RIGHT AWAY so the marketId is never lost,
+          // even if the bias step below fails. Idempotent on the server.
           await axios.post(`${BACKEND_URL}/api/ladder/groups/${g}/rungs`, {
             marketId: m,
             label: lbl,
             initialLiquidity: liq,
             addTxId: txRung.txId,
             initialYesPct: pct,
+            image: (r.image || "").trim(),
           });
+          createdCount += 1;
+
+          // Optional pricing bias. A bias failure is non-fatal (the rung exists
+          // and is registered); we just warn and continue with a neutral 50/50.
+          if (pct !== 50) {
+            try {
+              const txBias = await setMarketBias(m, pct);
+              // Wait for set-market-bias to mine before the next add-rung — chaining
+              // new signatures while the previous tx is still pending causes the
+              // wallet to fail with "Unable to broadcast transaction".
+              if (txBias && txBias.txId) {
+                toast.loading(`Confirming option ${i + 1} bias...`, { id: `bias-confirm-${i}` });
+                await pollTx(txBias.txId);
+                toast.dismiss(`bias-confirm-${i}`);
+              }
+            } catch (biasErr) {
+              toast.dismiss(`bias-confirm-${i}`);
+              console.warn(`[Admin] setMarketBias failed for rung ${m}:`, biasErr?.message);
+              toast(`Option ${i + 1}: bias not applied (starts at 50/50)`, { icon: "⚠️" });
+            }
+          }
         } catch (err) {
-          console.warn(`[Admin] Failed to register rung ${m} in backend:`, err?.message);
+          toast.dismiss(`rung-confirm-${i}`);
+          // Stop the whole creation here. Surface a clear, recoverable error.
+          const base =
+            err?.message === "User cancelled"
+              ? `Creation cancelled at option ${i + 1}.`
+              : `Option ${i + 1} failed: ${err?.message || err}.`;
+          throw new Error(
+            `${base} ${createdCount}/${total} options were created on-chain. ` +
+              `Use "Recover funds" on this market to refund the created options.`
+          );
         }
       }
 
-      return { groupId: g };
+      return { groupId: g, createdCount, total };
     },
     {
-      onSuccess: () => {
+      onSuccess: ({ createdCount, total }) => {
         setLadderCreating(false);
         setLadderForm(emptyLadderForm);
         refetchLadderGroups();
-        toast.success("Categorical market created");
+        toast.success(`Categorical market created (${createdCount}/${total} options)`);
       },
-      onError: (err) => toast.error(err?.message || "Failed to create categorical market"),
+      onError: (err) => {
+        // Refresh so a partially-created group shows up with its Recover button.
+        refetchLadderGroups();
+        toast.error(err?.message || "Failed to create categorical market", { duration: 8000 });
+      },
     }
   );
 
-  const resolveLadderMutation = useMutation(
-    async ({ groupId, outcomes }) => {
+  // Resolve a single rung independently. The contract requires
+  // resolve-ladder-group to have run once before any resolve-rung call —
+  // we handle that automatically the first time the admin resolves any rung
+  // in a still-active group.
+  const resolveSingleRungMutation = useMutation(
+    async ({ groupId, marketId, outcome }) => {
+      const g = Number(groupId);
+      const m = Number(marketId);
+      if (!Number.isFinite(g) || g <= 0) throw new Error("Invalid group ID");
+      if (!Number.isFinite(m) || m <= 0) throw new Error("Invalid market ID");
+      if (outcome !== "YES" && outcome !== "NO") throw new Error("Invalid outcome");
+
+      const group = ladderGroups.find((gr) => Number(gr.groupId) === g);
+      const groupStatus = String(group?.status || "active").toLowerCase();
+
+      // Step 1 — if the group is still active on the backend, call
+      // resolve-ladder-group on-chain first. The contract gates resolve-rung
+      // behind this. If the call aborts because the group was already
+      // resolved on-chain (out-of-sync state), continue gracefully.
+      if (groupStatus === "active") {
+        try {
+          const txGroup = await resolveLadderGroup(g);
+          toast.loading("Waiting for group resolution on-chain...", { id: "ladder-resolve" });
+          await pollTx(txGroup.txId);
+          toast.dismiss("ladder-resolve");
+        } catch (err) {
+          toast.dismiss("ladder-resolve");
+          if (err?.message === "User cancelled") throw err;
+          if (!err?.message?.includes("abort_by_response")) {
+            throw new Error(`Group resolution failed: ${err?.message || err}`);
+          }
+        }
+      }
+
+      // Step 2 — resolve the chosen rung on-chain
+      const txRung = await resolveRung(m, outcome);
+      toast.loading(`Resolving option as ${outcome}...`, { id: `rung-resolve-${m}` });
+      await pollTx(txRung.txId);
+      toast.dismiss(`rung-resolve-${m}`);
+
+      // Step 3 — persist on the backend
+      const res = await axios.post(
+        `${BACKEND_URL}/api/ladder/groups/${g}/rungs/${m}/resolve`,
+        { outcome, txId: txRung.txId }
+      );
+
+      return res.data;
+    },
+    {
+      onSuccess: (data) => {
+        refetchLadderGroups();
+        queryClient.invalidateQueries(["admin-ladder-surplus"]);
+        const lbl = data?.rung?.label || `#${data?.rung?.marketId}`;
+        toast.success(`Option "${lbl}" resolved as ${data?.rung?.outcome}`);
+        if (data?.group?.status === "resolved") {
+          setLadderResolvingGroupId(null);
+          setLadderRungOutcomes({});
+        }
+      },
+      onError: (err) => {
+        const apiMsg = err?.response?.data?.message;
+        toast.error(apiMsg || err?.message || "Failed to resolve rung");
+      },
+    }
+  );
+
+  // Recover funds from a group created by mistake or left incomplete.
+  // For every still-open rung: resolve-rung NO (no winner) then withdraw-surplus,
+  // which returns the full pool (initial liquidity + any trades' base) to the
+  // admin. Finally mark the group "cancelled" in the backend. This guarantees no
+  // STX stays stuck in the contract after a partial creation failure.
+  const recoverLadderMutation = useMutation(
+    async ({ groupId }) => {
       const g = Number(groupId);
       if (!Number.isFinite(g) || g <= 0) throw new Error("Invalid group ID");
 
       const group = ladderGroups.find((gr) => Number(gr.groupId) === g);
-      const alreadyResolved = String(group?.status || "").toLowerCase() === "resolved";
-
-      // 1. Resolve group on-chain (skip if already resolved — useful for retrying failed rungs)
-      if (!alreadyResolved) {
-        const txGroup = await resolveLadderGroup(g);
-
-        toast.loading("Waiting for group resolution on-chain...", { id: "ladder-resolve" });
-        await pollTx(txGroup.txId);
-        toast.dismiss("ladder-resolve");
-
-        // 2. Notify backend
-        await axios.post(`${BACKEND_URL}/api/ladder/groups/${g}/resolve`, {
-          txId: txGroup.txId,
-          outcomes: Object.entries(outcomes || {}).map(([marketId, outcome]) => ({
-            marketId: Number(marketId),
-            outcome,
-          })),
-        });
-      }
-
-      // 3. Resolve each rung on-chain with admin-selected outcome — wallet prompts one after another
-      // Admin endpoint returns populated `polls`; public endpoint returns transformed `rungs`. Support both.
       const rungs = group?.rungs || group?.polls || [];
-      for (const [i, r] of rungs.entries()) {
-        const m = Number(r.marketId);
-        if (!Number.isFinite(m) || m <= 0) continue;
-        const outcome = outcomes?.[String(m)] || "NO";
+      const groupStatus = String(group?.status || "active").toLowerCase();
+
+      // Step 1 — open the on-chain resolution gate once (resolve-ladder-group).
+      if (groupStatus === "active") {
         try {
-          const txRung = await resolveRung(m, outcome);
-          toast.loading(`Option ${i + 1}/${rungs.length} (${outcome}) confirming...`, { id: `rung-resolve-${i}` });
-          await pollTx(txRung.txId);
-          toast.dismiss(`rung-resolve-${i}`);
+          const txGroup = await resolveLadderGroup(g);
+          toast.loading("Opening resolution gate on-chain...", { id: "recover-gate" });
+          await pollTx(txGroup.txId);
+          toast.dismiss("recover-gate");
         } catch (err) {
-          toast.dismiss(`rung-resolve-${i}`);
-          if (err?.message === "User cancelled") {
-            toast.error("Resolution cancelled — remaining options skipped");
-            break; // Stop the chain if user cancels
+          toast.dismiss("recover-gate");
+          if (err?.message === "User cancelled") throw err;
+          if (!err?.message?.includes("abort_by_response")) {
+            throw new Error(`Gate failed: ${err?.message || err}`);
           }
-          // Skip already-resolved rungs silently
-          if (err?.message?.includes("abort_by_response")) continue;
-          toast.error(`Option ${i + 1} failed: ${err?.message}`);
         }
       }
 
-      return { groupId: g };
+      // Step 2 — per rung: settle NO (if not already resolved) then drain surplus.
+      const recovered = [];
+      for (const [i, r] of rungs.entries()) {
+        const m = Number(r.marketId);
+        if (!Number.isFinite(m) || m <= 0) continue;
+        const already =
+          r.isResolved === true || r.winningOption === 0 || r.winningOption === 1;
+
+        try {
+          if (!already) {
+            const txR = await resolveRung(m, "NO");
+            toast.loading(`Closing option ${i + 1}/${rungs.length}...`, { id: `rec-res-${m}` });
+            await pollTx(txR.txId);
+            toast.dismiss(`rec-res-${m}`);
+          }
+        } catch (err) {
+          toast.dismiss(`rec-res-${m}`);
+          if (err?.message === "User cancelled") throw err;
+          // Already-resolved on-chain → keep going to the withdraw step.
+          if (!err?.message?.includes("abort_by_response")) {
+            console.warn(`[Admin] recover resolve rung ${m} failed:`, err?.message);
+          }
+        }
+
+        try {
+          const txW = await withdrawSurplus(m);
+          toast.loading(`Refunding option ${i + 1}/${rungs.length}...`, { id: `rec-wd-${m}` });
+          await pollTx(txW.txId);
+          toast.dismiss(`rec-wd-${m}`);
+          recovered.push(m);
+        } catch (err) {
+          toast.dismiss(`rec-wd-${m}`);
+          if (err?.message === "User cancelled") throw err;
+          // No surplus / already withdrawn → not fatal, the rung is still settled.
+          console.warn(`[Admin] recover withdraw rung ${m} failed:`, err?.message);
+          recovered.push(m);
+        }
+      }
+
+      // Step 3 — mark the group cancelled in the backend.
+      const res = await axios.post(`${BACKEND_URL}/api/ladder/groups/${g}/recover`, {
+        resolvedMarketIds: recovered,
+      });
+      return res.data;
     },
     {
       onSuccess: () => {
@@ -927,9 +1066,13 @@ const Admin = () => {
         setLadderRungOutcomes({});
         refetchLadderGroups();
         queryClient.invalidateQueries(["admin-ladder-surplus"]);
-        toast.success("Categorical market resolved");
+        toast.success("Funds recovered — group cancelled");
       },
-      onError: (err) => toast.error(err?.message || "Failed to resolve categorical market"),
+      onError: (err) => {
+        refetchLadderGroups();
+        const apiMsg = err?.response?.data?.message;
+        toast.error(apiMsg || err?.message || "Recovery failed");
+      },
     }
   );
 
@@ -994,13 +1137,14 @@ const Admin = () => {
                   <th className="py-2 pr-4">Category</th>
                   <th className="py-2 pr-4">End</th>
                   <th className="py-2 pr-4">Active</th>
+                  <th className="py-2 pr-4">Public</th>
                   <th className="py-2 pr-4">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td className="py-6" colSpan="5">
+                    <td className="py-6" colSpan="6">
                       Loading...
                     </td>
                   </tr>
@@ -1020,6 +1164,27 @@ const Admin = () => {
                         {new Date(p.endDate).toLocaleString()}
                       </td>
                       <td className="py-2 pr-4">{p.isActive ? "Yes" : "No"}</td>
+                      <td className="py-2 pr-4">
+                        <button
+                          onClick={() =>
+                            togglePollEnabledMutation.mutate({
+                              id: p._id,
+                              enabled: !p.enabled,
+                            })
+                          }
+                          disabled={togglePollEnabledMutation.isLoading}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                            p.enabled ? "bg-emerald-500" : "bg-gray-300 dark:bg-gray-600"
+                          }`}
+                          title={p.enabled ? "Public — click to hide" : "Hidden — click to publish"}
+                        >
+                          <span
+                            className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transform transition-transform ${
+                              p.enabled ? "translate-x-4" : "translate-x-0.5"
+                            }`}
+                          />
+                        </button>
+                      </td>
 
                       <td className="py-2 pr-4 flex gap-2 items-center">
                         <button
@@ -1273,10 +1438,10 @@ const Admin = () => {
         <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg p-4">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">
-              Mercados Categóricos
+              Categorical Markets
             </h2>
             <button onClick={() => setLadderCreating(true)} className="btn-primary">
-              Crear Mercado Categórico
+              Create Categorical Market
             </button>
           </div>
 
@@ -1286,11 +1451,11 @@ const Admin = () => {
               <thead>
                 <tr className="text-left text-gray-500 dark:text-gray-400">
                   <th className="py-2 pr-4">Group ID</th>
-                  <th className="py-2 pr-4">Titulo</th>
-                  <th className="py-2 pr-4">Estado</th>
-                  <th className="py-2 pr-4">Opciones</th>
-                  <th className="py-2 pr-4">Público</th>
-                  <th className="py-2 pr-4">Acciones</th>
+                  <th className="py-2 pr-4">Title</th>
+                  <th className="py-2 pr-4">Status</th>
+                  <th className="py-2 pr-4">Options</th>
+                  <th className="py-2 pr-4">Public</th>
+                  <th className="py-2 pr-4">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1338,7 +1503,7 @@ const Admin = () => {
                           className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
                             g.isPublic ? "bg-emerald-500" : "bg-gray-300 dark:bg-gray-600"
                           }`}
-                          title={g.isPublic ? "Visible en sitio público — click para ocultar" : "Oculto — click para publicar"}
+                          title={g.isPublic ? "Public — click to hide" : "Hidden — click to publish"}
                         >
                           <span
                             className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transform transition-transform ${
@@ -1352,15 +1517,28 @@ const Admin = () => {
                           {ladderResolvingGroupId === g.groupId ? (
                             (() => {
                               const groupRungs = g.rungs || g.polls || [];
-                              const yesCount = groupRungs.filter(
-                                (r) => ladderRungOutcomes[String(r.marketId)] === "YES"
-                              ).length;
+                              const busy = resolveSingleRungMutation.isLoading;
+                              const busyMarketId = resolveSingleRungMutation.variables?.marketId;
                               return (
                                 <div className="flex flex-col gap-2 max-w-md w-full">
+                                  <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                                    Resolve each option independently. Unresolved options remain tradeable.
+                                  </div>
                                   <div className="space-y-1.5">
                                     {groupRungs.map((r) => {
                                       const mId = String(r.marketId);
-                                      const sel = ladderRungOutcomes[mId] || "NO";
+                                      const isResolved =
+                                        r.isResolved === true ||
+                                        r.winningOption === 0 ||
+                                        r.winningOption === 1;
+                                      const resolvedOutcome =
+                                        String(r.outcome || "").toUpperCase() ||
+                                        (r.winningOption === 0
+                                          ? "YES"
+                                          : r.winningOption === 1
+                                          ? "NO"
+                                          : "");
+                                      const rowBusy = busy && Number(busyMarketId) === Number(r.marketId);
                                       return (
                                         <div
                                           key={mId}
@@ -1369,88 +1547,122 @@ const Admin = () => {
                                           <span className="truncate text-gray-700 dark:text-gray-300">
                                             {r.label || `#${r.marketId}`}
                                           </span>
-                                          <div className="inline-flex rounded-md overflow-hidden border border-gray-300 dark:border-gray-600">
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                setLadderRungOutcomes((prev) => ({ ...prev, [mId]: "YES" }))
-                                              }
-                                              className={`px-2 py-0.5 text-[10px] font-semibold ${
-                                                sel === "YES"
-                                                  ? "bg-emerald-500 text-white"
-                                                  : "bg-white text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                                          {isResolved ? (
+                                            <span
+                                              className={`px-2 py-0.5 text-[10px] font-semibold rounded ${
+                                                resolvedOutcome === "YES"
+                                                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                                                  : "bg-rose-500/15 text-rose-600 dark:text-rose-400"
                                               }`}
                                             >
-                                              YES
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                setLadderRungOutcomes((prev) => ({ ...prev, [mId]: "NO" }))
-                                              }
-                                              className={`px-2 py-0.5 text-[10px] font-semibold ${
-                                                sel === "NO"
-                                                  ? "bg-rose-500 text-white"
-                                                  : "bg-white text-gray-700 dark:bg-gray-800 dark:text-gray-300"
-                                              }`}
-                                            >
-                                              NO
-                                            </button>
-                                          </div>
+                                              Resolved {resolvedOutcome}
+                                            </span>
+                                          ) : (
+                                            <div className="inline-flex rounded-md overflow-hidden border border-gray-300 dark:border-gray-600">
+                                              <button
+                                                type="button"
+                                                disabled={busy}
+                                                onClick={() =>
+                                                  resolveSingleRungMutation.mutate({
+                                                    groupId: g.groupId,
+                                                    marketId: r.marketId,
+                                                    outcome: "YES",
+                                                  })
+                                                }
+                                                className="px-2 py-0.5 text-[10px] font-semibold bg-emerald-500 text-white disabled:opacity-50"
+                                              >
+                                                {rowBusy && resolveSingleRungMutation.variables?.outcome === "YES"
+                                                  ? "..."
+                                                  : "Resolve YES"}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                disabled={busy}
+                                                onClick={() =>
+                                                  resolveSingleRungMutation.mutate({
+                                                    groupId: g.groupId,
+                                                    marketId: r.marketId,
+                                                    outcome: "NO",
+                                                  })
+                                                }
+                                                className="px-2 py-0.5 text-[10px] font-semibold bg-rose-500 text-white disabled:opacity-50"
+                                              >
+                                                {rowBusy && resolveSingleRungMutation.variables?.outcome === "NO"
+                                                  ? "..."
+                                                  : "Resolve NO"}
+                                              </button>
+                                            </div>
+                                          )}
                                         </div>
                                       );
                                     })}
                                   </div>
-                                  {(yesCount === 0 || yesCount > 1) && (
-                                    <p className="text-[10px] text-amber-500">
-                                      ⚠️{" "}
-                                      {yesCount === 0
-                                        ? "Ningún YES seleccionado"
-                                        : `${yesCount} opciones marcadas como YES`}
-                                    </p>
-                                  )}
                                   <div className="flex gap-2">
-                                    <button
-                                      onClick={() =>
-                                        resolveLadderMutation.mutate({
-                                          groupId: g.groupId,
-                                          outcomes: ladderRungOutcomes,
-                                        })
-                                      }
-                                      disabled={resolveLadderMutation.isLoading}
-                                      className="btn-primary btn-sm disabled:opacity-50"
-                                    >
-                                      {resolveLadderMutation.isLoading
-                                        ? "..."
-                                        : "Confirmar resolución"}
-                                    </button>
                                     <button
                                       onClick={() => {
                                         setLadderResolvingGroupId(null);
                                         setLadderRungOutcomes({});
                                       }}
                                       className="btn-outline btn-sm"
+                                      disabled={busy || recoverLadderMutation.isLoading}
                                     >
-                                      Cancelar
+                                      Close panel
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (
+                                          window.confirm(
+                                            "Recover funds?\n\nThis closes EVERY option with no winner and refunds all liquidity to the admin wallet. Use it only for markets created by mistake or left incomplete. You'll sign one transaction per option."
+                                          )
+                                        ) {
+                                          recoverLadderMutation.mutate({ groupId: g.groupId });
+                                        }
+                                      }}
+                                      disabled={busy || recoverLadderMutation.isLoading}
+                                      className="btn-outline btn-sm text-rose-500 border-rose-500 hover:bg-rose-500/10 disabled:opacity-50"
+                                      title="Settle all options NO and withdraw all liquidity back to the admin"
+                                    >
+                                      {recoverLadderMutation.isLoading ? "Recovering..." : "Recover funds"}
                                     </button>
                                   </div>
                                 </div>
                               );
                             })()
                           ) : String(g.status || "").toLowerCase() !== "resolved" ? (
-                            <button
-                              onClick={() => {
-                                setLadderResolvingGroupId(g.groupId);
-                                const init = {};
-                                (g.rungs || g.polls || []).forEach((r) => {
-                                  init[String(r.marketId)] = "NO";
-                                });
-                                setLadderRungOutcomes(init);
-                              }}
-                              className="btn-outline btn-sm"
-                            >
-                              Resolver
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => {
+                                  setLadderResolvingGroupId(g.groupId);
+                                  const init = {};
+                                  (g.rungs || g.polls || []).forEach((r) => {
+                                    init[String(r.marketId)] = "NO";
+                                  });
+                                  setLadderRungOutcomes(init);
+                                }}
+                                className="btn-outline btn-sm"
+                              >
+                                Resolve
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      "Recover funds?\n\nThis closes EVERY option with no winner and refunds all liquidity to the admin wallet. Use it only for markets created by mistake or left incomplete. You'll sign one transaction per option."
+                                    )
+                                  ) {
+                                    recoverLadderMutation.mutate({ groupId: g.groupId });
+                                  }
+                                }}
+                                disabled={recoverLadderMutation.isLoading}
+                                className="btn-outline btn-sm text-rose-500 border-rose-500 hover:bg-rose-500/10 disabled:opacity-50"
+                                title="Settle all options NO and withdraw all liquidity back to the admin"
+                              >
+                                {recoverLadderMutation.isLoading &&
+                                recoverLadderMutation.variables?.groupId === g.groupId
+                                  ? "Recovering..."
+                                  : "Recover funds"}
+                              </button>
+                            </div>
                           ) : (() => {
                             const totalSurplus = getLadderGroupSurplus(g);
                             const allWithdrawn = totalSurplus <= 0;
@@ -1480,7 +1692,7 @@ const Admin = () => {
                                     }}
                                     className="btn-outline btn-sm text-amber-500 border-amber-500 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
-                                    {busy ? "..." : "Re-resolver"}
+                                    {busy ? "..." : "Re-resolve"}
                                   </button>
                                   <button
                                     disabled={busy || allWithdrawn}
@@ -1540,13 +1752,13 @@ const Admin = () => {
             >
               <div className="p-6">
                 <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4">
-                  Crear Mercado Categórico
+                  Create Categorical Market
                 </h2>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div>
                     <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
-                      Fecha de cierre
+                      Close date
                     </label>
                     <input
                       className="input w-full"
@@ -1558,7 +1770,7 @@ const Admin = () => {
 
                   <div className="md:col-span-2">
                     <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
-                      Titulo
+                      Title
                     </label>
                     <input
                       className="input w-full"
@@ -1570,10 +1782,11 @@ const Admin = () => {
 
                   <div className="md:col-span-2">
                     <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
-                      Descripción / Fuente de resolución
+                      Description / Resolution source
                     </label>
-                    <input
+                    <textarea
                       className="input w-full"
+                      rows={4}
                       value={ladderForm.description}
                       onChange={(e) => setLadderForm({ ...ladderForm, description: e.target.value })}
                       placeholder="e.g. Official UEFA result on 2026-05-30"
@@ -1582,7 +1795,7 @@ const Admin = () => {
 
                   <div className="md:col-span-2">
                     <label className="block text-sm text-gray-600 dark:text-gray-300 mb-1">
-                      Imagen
+                      Image
                     </label>
                     <div className="flex gap-2 items-center">
                       <input
@@ -1623,14 +1836,14 @@ const Admin = () => {
                   </div>
                 </div>
 
-                {/* Opciones */}
+                {/* Options */}
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                      Opciones
+                      Options
                     </h3>
                     <button onClick={addLadderRung} className="btn-outline btn-sm">
-                      + Agregar opción
+                      + Add option
                     </button>
                   </div>
 
@@ -1638,8 +1851,53 @@ const Admin = () => {
                     {ladderForm.rungs.map((rung, i) => (
                       <div
                         key={i}
-                        className="grid grid-cols-1 md:grid-cols-3 gap-2 p-3 bg-gray-50 dark:bg-gray-700/40 rounded-lg"
+                        className="grid grid-cols-1 md:grid-cols-4 gap-2 p-3 bg-gray-50 dark:bg-gray-700/40 rounded-lg"
                       >
+                        <div>
+                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                            Image
+                          </label>
+                          <div className="flex gap-1 items-center">
+                            <input
+                              className="input flex-1 text-xs"
+                              placeholder="URL"
+                              value={rung.image || ""}
+                              onChange={(e) => updateLadderRung(i, "image", e.target.value)}
+                            />
+                            <label className="btn-outline btn-sm cursor-pointer px-2">
+                              {uploadingField === `ladderRung-${i}` ? "…" : "↑"}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={async (e) => {
+                                  const file = e.target.files[0];
+                                  if (!file) return;
+                                  setUploadingField(`ladderRung-${i}`);
+                                  try {
+                                    const data = new FormData();
+                                    data.append("image", file);
+                                    const res = await axios.post(`${BACKEND_URL}/api/uploads/image`, data, {
+                                      headers: { "Content-Type": "multipart/form-data" },
+                                    });
+                                    updateLadderRung(i, "image", res.data.url);
+                                  } catch (err) {
+                                    toast.error(err?.response?.data?.message || "Upload failed");
+                                  } finally {
+                                    setUploadingField(null);
+                                  }
+                                }}
+                              />
+                            </label>
+                            {rung.image && (
+                              <img
+                                src={rung.image}
+                                alt={`option ${i + 1}`}
+                                className="w-8 h-8 rounded object-cover shrink-0"
+                              />
+                            )}
+                          </div>
+                        </div>
                         <div>
                           <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
                             Label
@@ -1653,7 +1911,7 @@ const Admin = () => {
                         </div>
                         <div>
                           <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-                            Liquidez inicial (STX)
+                            Initial liquidity (STX)
                           </label>
                           <input
                             className="input w-full text-sm"
@@ -1666,7 +1924,7 @@ const Admin = () => {
                         </div>
                         <div className="flex flex-col">
                           <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-                            % YES inicial
+                            Initial YES %
                           </label>
                           <div className="flex gap-1">
                             <input
@@ -1702,14 +1960,14 @@ const Admin = () => {
                       setLadderForm(emptyLadderForm);
                     }}
                   >
-                    Cancelar
+                    Cancel
                   </button>
                   <button
                     className="btn-primary"
                     onClick={() => createLadderMutation.mutate()}
                     disabled={createLadderMutation.isLoading}
                   >
-                    {createLadderMutation.isLoading ? "Creando..." : "Crear on-chain"}
+                    {createLadderMutation.isLoading ? "Creating..." : "Create on-chain"}
                   </button>
                 </div>
               </div>

@@ -392,10 +392,11 @@ const TradePanel = ({ selectedRung, selectedSide, onSideChange, user, onTradeSuc
       .catch(() => {});
   }, [user?.walletAddress, refreshKey]);
 
-  // Reset on rung change
+  // Reset on rung change — keep the user's amount/shares input so they can
+  // compare quotes across rungs without retyping; only clear the stale quote
+  // and per-rung balances (auto-quote effects will recalculate from the
+  // existing input against the newly selected rung).
   useEffect(() => {
-    setBudget("");
-    setSellShares("");
     setQuote(null);
     setQuoteError(null);
     setUserShares({ yes: 0, no: 0 });
@@ -565,9 +566,18 @@ const TradePanel = ({ selectedRung, selectedSide, onSideChange, user, onTradeSuc
 
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-soft p-4 sm:p-5 lg:sticky lg:top-24 space-y-5">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-          {selectedRung.label}
-        </h3>
+        <div className="flex items-center gap-2">
+          {selectedRung.image && (
+            <img
+              src={selectedRung.image}
+              alt={selectedRung.label || "option"}
+              className="w-8 h-8 rounded object-cover shrink-0"
+            />
+          )}
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+            {selectedRung.label}
+          </h3>
+        </div>
 
         <div>
           <div className="text-xs text-gray-500 dark:text-gray-400">Outcome</div>
@@ -645,6 +655,22 @@ const TradePanel = ({ selectedRung, selectedSide, onSideChange, user, onTradeSuc
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-soft p-4 sm:p-5 lg:sticky lg:top-24">
+      {/* Selected rung header — image + label so the user knows which option they're trading */}
+      {(selectedRung.image || selectedRung.label) && (
+        <div className="flex items-center gap-2 mb-3">
+          {selectedRung.image && (
+            <img
+              src={selectedRung.image}
+              alt={selectedRung.label || "option"}
+              className="w-8 h-8 rounded object-cover shrink-0"
+            />
+          )}
+          <span className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+            {selectedRung.label}
+          </span>
+        </div>
+      )}
+
       {/* Top row: Buy/Sell tabs + "Market ▾" — identical to PollDetail */}
       <div className="flex items-center justify-between mb-3">
         <div className="tabs">
@@ -1326,13 +1352,21 @@ const LadderGroupDetail = () => {
                             {/* Label */}
                             <td className="block sm:table-cell py-1 sm:py-3 px-0 sm:px-4">
                               <div className="flex items-center gap-2">
-                                <span
-                                  className="inline-block w-3 h-3 rounded-full shrink-0"
-                                  style={{
-                                    background: RUNG_COLORS[i % RUNG_COLORS.length],
-                                    boxShadow: `0 0 0 2px ${RUNG_COLORS[i % RUNG_COLORS.length]}33`,
-                                  }}
-                                />
+                                {rung.image ? (
+                                  <img
+                                    src={rung.image}
+                                    alt={rung.label || "rung"}
+                                    className="w-7 h-7 rounded object-cover shrink-0"
+                                  />
+                                ) : (
+                                  <span
+                                    className="inline-block w-3 h-3 rounded-full shrink-0"
+                                    style={{
+                                      background: RUNG_COLORS[i % RUNG_COLORS.length],
+                                      boxShadow: `0 0 0 2px ${RUNG_COLORS[i % RUNG_COLORS.length]}33`,
+                                    }}
+                                  />
+                                )}
                                 <span className="font-semibold text-gray-900 dark:text-white text-sm sm:text-base">
                                   {rung.label}
                                 </span>
@@ -1579,15 +1613,23 @@ const LadderGroupDetail = () => {
             isGroupResolved={isResolved}
             refreshKey={refreshKey}
             onTradeSuccess={() => {
-              // Force refetch (not just invalidate) so on-chain reads happen now.
-              // This re-runs the ladder-group query which re-enriches rungs from on-chain,
-              // immediately updating percentages in the table and chart.
-              queryClient.refetchQueries(["ladder-group", groupId]);
-              queryClient.refetchQueries(["ladder-group-trades", groupId]);
-              queryClient.refetchQueries(["ladder-group-holders", groupId]);
-              queryClient.refetchQueries(["ladder-group-claimables", groupId]);
-              // Bump local refresh key to force on-chain re-reads in TradePanel
+              // Immediate refetch — picks up on-chain reads (probabilities, chart).
+              // Volume/totalTrades come from MongoDB and depend on the on-chain
+              // indexer (runs every ~15s); refetch again with a delay so the
+              // table reflects the new trade once the indexer has persisted it.
+              const refetchAll = () => {
+                queryClient.refetchQueries(["ladder-group", groupId]);
+                queryClient.refetchQueries(["ladder-group-trades", groupId]);
+                queryClient.refetchQueries(["ladder-group-holders", groupId]);
+                queryClient.refetchQueries(["ladder-group-claimables", groupId]);
+              };
+              refetchAll();
               setRefreshKey((k) => k + 1);
+              // Second pass after the indexer's next tick (15s interval + margin).
+              setTimeout(() => {
+                refetchAll();
+                setRefreshKey((k) => k + 1);
+              }, 18000);
             }}
           />
 

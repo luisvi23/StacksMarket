@@ -13,13 +13,13 @@ const ladderGroupSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      maxlength: 200,
+      maxlength: 500,
     },
     resolutionSource: {
       type: String,
       required: true,
       trim: true,
-      maxlength: 200,
+      maxlength: 5000,
     },
     image: {
       type: String,
@@ -31,7 +31,10 @@ const ladderGroupSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["active", "resolving", "resolved"],
+      // "cancelled" = group was recovered/refunded (every rung settled NO and
+      // its surplus withdrawn by the admin) — used for groups created by mistake
+      // or left incomplete after a partial creation failure.
+      enum: ["active", "resolving", "resolved", "cancelled"],
       default: "active",
     },
     resolvedAt: {

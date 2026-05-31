@@ -68,7 +68,7 @@ Entorno de desarrollo compartido para que el equipo pueda testear. Separado del 
    - `REACT_APP_SOCKET_URL` → misma URL de Render
    - `REACT_APP_STACKS_NETWORK=testnet`
    - `REACT_APP_CONTRACT_ADDRESS=ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP`
-   - `REACT_APP_CONTRACT_NAME=market-factory-v21-testnet-bias`
+   - `REACT_APP_CONTRACT_NAME=market-factory-v23-testnet-bias`
    - Resto de variables `REACT_APP_*` del `.env.dev.example`
 6. Haz **Deploy**.
 7. Cuando termine, copia la URL (ej. `https://stacksmarket-dev.vercel.app`).
