@@ -767,19 +767,48 @@ export function logoutWallet() {
 }
 
 // Queries Leather for the currently active STX address without showing a popup.
-// Returns null if the provider is unavailable or the query fails.
+// Returns null if the provider is unavailable, fails, or doesn't answer in time.
+//
+// Leather >= Aug 2026 ("delete legacy requests", leather-io/mono#2612): the
+// extension's content script now drops any request whose method is not a string,
+// so this object-form call gets no response and the promise would hang forever.
+// The modern string form request("getAddresses") is NOT a silent replacement —
+// it always opens the share-addresses popup. So we keep the object form (older
+// Leather answers it silently), race it against a timeout, and after the first
+// timeout stop querying for the rest of the session so trade clicks aren't
+// delayed by a wallet that will never answer.
+const LIVE_ADDRESS_TIMEOUT_MS = 2500;
+let liveAddressQueryUnsupported = false;
+
 export async function getLiveWalletAddress() {
   const provider = window.LeatherProvider;
-  if (!provider?.request) return null;
+  if (!provider?.request || liveAddressQueryUnsupported) return null;
+  let timeoutId;
   try {
-    const res = await provider.request({ method: "getAddresses" });
+    const res = await Promise.race([
+      provider.request({ method: "getAddresses" }),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("LIVE_ADDRESS_TIMEOUT")),
+          LIVE_ADDRESS_TIMEOUT_MS
+        );
+      }),
+    ]);
     return (
       res?.result?.addresses?.stx?.[0]?.address ||
       res?.addresses?.stx?.[0]?.address ||
       null
     );
-  } catch {
+  } catch (err) {
+    if (err?.message === "LIVE_ADDRESS_TIMEOUT") {
+      liveAddressQueryUnsupported = true;
+      logConnect("getLiveWalletAddress:timeout", {
+        note: "Leather did not answer silent getAddresses; skipping live checks this session",
+      });
+    }
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
